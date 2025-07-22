@@ -1,5 +1,4 @@
 # Household-Energy ABM  
-*Mesa 3 · mesa-geo · Solara dashboard*
 
 Agent-based model that simulates **hour-by-hour electricity demand** for every
 dwelling in a neighbourhood GeoJSON.  
