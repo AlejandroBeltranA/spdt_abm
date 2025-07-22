@@ -1,0 +1,19 @@
+# --- Core ABM stack ------------------------------------------------
+mesa==3.2.0               # Mesa 3.x agent-based modelling framework
+mesa-geo>=0.9.1           # Spatial extensions (GeoSpace, GeoAgent)
+
+# --- Dashboard / UI -----------------------------------------------
+solara>=1.28              # Reactive web UI + ipywidgets 8 backend
+
+# --- Data handling -------------------------------------------------
+pandas                    # tabular analysis + CSV/Parquet I/O
+numpy                     # numerical backbone (pandas + matplotlib depend on it)
+pyarrow                   # fast Parquet read/write for pandas
+
+# --- Visualisation -------------------------------------------------
+matplotlib                # static plots (line, bar, heat-map)
+folium                    # interactive Leaflet maps
+contextily                # background tiles for hex-bin basemap
+
+# --- Utility -------------------------------------------------------
+cloudpickle               # serialise full Mesa model objects for replay
