@@ -1,0 +1,16 @@
+# ── virtual-envs ─────────────────────────
+.venv/
+esa_mesa/
+
+# ── build / results ──────────────────────
+results/
+*.png
+*.html
+*.csv
+*.parquet
+*.pkl
+
+# ── OS / editor cruft ────────────────────
+.DS_Store
+.vscode/
+.idea/
