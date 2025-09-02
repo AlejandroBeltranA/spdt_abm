@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "household-energy-abm"
+version = "0.1.0"
+dependencies = [
+  "mesa==3.2.0",
+  "mesa-geo>=0.9.1",
+  "pandas",
+  "numpy",
+  "pyarrow",
+  "matplotlib",
+  "folium",
+  "contextily",
+  "cloudpickle",
+  "scipy",
+  "solara>=1.28",
+  "openpyxl"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["household_energy*"]
+
+[project.scripts]  # optional, but recommended so you can `energy-run ...`
+energy-run = "household_energy.run:main"
+energy-analyze = "household_energy.analyze:main"
+energy-server = "household_energy.server:main"
