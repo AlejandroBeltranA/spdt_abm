@@ -41,13 +41,13 @@ All contents of `data/` are ignored by Git (keep placeholders only):
 ```
 
 Put **local inputs** here and do **not** commit them:
-- Neighbourhood GeoJSON (`data/xxx_neighborhood.geojson`)
-- Hourly climate parquet (from `01-climate-prep.ipynb`)
+- Neighbourhood GeoJSON (`data/abm_households_XXXXX.geojson`)
+- Hourly climate parquet (`data/xxx_2t_TIME.parquet`)
 - DESNZ workbooks  
   - `Subnational_electricity_consumption_statistics_2005-2023.xlsx`  
   - `Subnational_gas_consumption_statistics_2005-2023.xlsx`
 
-If something in `data/` was previously tracked, untrack it and rewrite history as needed.
+
 
 ---
 
@@ -73,7 +73,7 @@ Use `notebooks/01-climate-prep.ipynb` to create an **hourly** climate parquet th
 data/hourly_climate.parquet
 ```
 
-or use the ncc_2t_timeseries_2010_2039.parquet file that contains the climatedt projections.
+
 ---
 
 ## Run the model (headless)
@@ -84,7 +84,7 @@ or use the ncc_2t_timeseries_2010_2039.parquet file that contains the climatedt 
 
 ```bash
 energy-run \
-  data/ncc_neighborhood.geojson \
+  data/abm_households_newcastle.geojson \
   --climate data/ncc_2t_timeseries_2010_2039.parquet \
   --days 7 \
   --outdir results \
@@ -95,7 +95,7 @@ energy-run \
 
 ```bash
 energy-run
- data/ncc_neighborhood.geojson \
+ data/abm_households_newcastle.geojson \
   --climate data/hourly_climate.parquet \
   --start-utc 2020-01-01T00:00:00Z 
   --end-utc 2025-01-01T00:00:00Z \
@@ -128,6 +128,7 @@ Written to `--outdir`:
 ---
 
 ## Interactive dashboard
+Still troubleshooting this for the full sample. 
 
 ```bash
 GEOJSON_PATH=data/abm_households_newcastle.geojson \
@@ -146,9 +147,16 @@ Includes:
 ## Analyze results (static)
 
 ```bash
-energy-analyze --geojson data/abm_households_newcastle.geojson --outdir results
-python -m household_energy.analyze   --geojson data/abm_households_newcastle.geojson   --outdir results
-# or: energy-analyze --geojson ... --outdir ...
+energy-analyze 
+--geojson data/abm_households_newcastle.geojson 
+--outdir results
+```
+or
+```bash
+python -m household_energy.analyze   
+--geojson data/abm_households_newcastle.geojson   
+--outdir results
+
 ```
 
 Creates:
