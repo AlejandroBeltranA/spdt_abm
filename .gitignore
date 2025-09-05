@@ -241,3 +241,27 @@ __marimo__/
 
 # macOS cruft
 **/.DS_Store
+
+# Envs & caches
+.venv/
+venv/
+esa_mesa/
+__pycache__/
+**/.DS_Store
+.ipynb_checkpoints/
+
+# Sensitive data
+/data/**
+!/data/.gitkeep
+!/data/README.md
+
+# Results / artefacts
+/results/**
+*.parquet
+*.csv
+*.pkl
+*.png
+*.html
+
+# Build metadata
+*.egg-info/
