@@ -19,6 +19,8 @@ results/
 /data/**
 !/data/.gitkeep
 !/data/README.md
+/scripts/**
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
