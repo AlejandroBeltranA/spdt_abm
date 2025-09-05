@@ -22,6 +22,7 @@ This version adds light-weight climate hooks to HouseholdAgent:
 - `apply_climate(...)`: converts ambient temp → kWh and adds it to the tick load
 """
 
+
 from __future__ import annotations
 
 import math
@@ -38,8 +39,6 @@ from shapely.geometry.base import BaseGeometry
 #  Energy scaling by property archetype
 # ────────────────────────────────────────────────────────────────────
 
-#: Multiplicative factor applied to *annual energy demand* to reflect
-#: differences among EST property archetypes.
 PROPERTY_TYPE_MULTIPLIER: Dict[str, float] = {
     "mid-terraced house": 1.00,
     "semi-detached house": 1.25,
@@ -51,14 +50,10 @@ PROPERTY_TYPE_MULTIPLIER: Dict[str, float] = {
     "flat in mixed use building": 0.85,
 }
 
-#: Convenience list (UI components, plots, etc.)
 PROPERTY_TYPES: List[str] = list(PROPERTY_TYPE_MULTIPLIER.keys())
 
 # ────────────────────────────────────────────────────────────────────
-#  Schedule profiles (leave + return hour in local time)
-# ────────────────────────────────────────────────────────────────────
 
-#: Coarse stereotypes used to create residents with different daily routines.
 SCHEDULE_PROFILES = [
     {"name": "Parent",    "leave":  7, "return": 15},
     {"name": "Worker",    "leave":  9, "return": 17},
@@ -71,27 +66,7 @@ SCHEDULE_PROFILES = [
 # ────────────────────────────────────────────────────────────────────
 
 class HouseholdAgent(mg.GeoAgent):
-    """Spatial agent representing one dwelling (building polygon or centroid).
-
-    Attributes
-    ----------
-    energy_demand : float
-        Annual kWh demand taken from EST sample (before multipliers).
-    energy_consumption : float
-        Running total for the *current* simulation step (hour).
-        Reset to zero at the start of each tick by the model.
-    residents : list[PersonAgent]
-        Back-references to the PersonAgents who live here.
-
-    Climate hooks (set/used by the model each tick)
-    -----------------------------------------------
-    clim_idx : Optional[int]
-        Index of the nearest climate grid point (assigned once by the model).
-    ambient_tempC : float
-        Latest sampled outdoor temperature (°C) for this dwelling.
-    climate_heating_kWh / climate_cooling_kWh : float
-        Per-tick kWh added due to heating/cooling degree-hours.
-    """
+    """Spatial agent representing one dwelling (building polygon or centroid)."""
 
     def __init__(
         self,
@@ -101,17 +76,40 @@ class HouseholdAgent(mg.GeoAgent):
         *,
         property_type: str = "unknown",
         sap_rating: float = 70,
-        energy_demand: float = 10_000,
+        # NEW: prefer calibrated annual demand (DESNZ/LSOA adjusted)
+        annual_energy_kwh: float = 10_000,  # NEW
+        # ─── core drivers (plumb-through; optional) ─────────────────
+        floor_area_m2: float | None = None,          # NEW
+        property_age: str | None = None,             # NEW
+        main_fuel_type: str | None = None,           # NEW
+        main_heating_system: str | None = None,      # NEW
+        retrofit_envelope_score: float | None = None,# NEW (0–1 expected)
+        imd_decile: float | None = None,             # NEW
+        # ─── policy levers & context (optional) ────────────────────
+        heating_controls: str | None = None,         # NEW
+        meter_type: str | None = None,               # NEW
+        cwi_flag: int | None = None,                 # NEW
+        swi_flag: int | None = None,                 # NEW
+        loft_ins_flag: int | None = None,            # NEW
+        floor_ins_flag: int | None = None,           # NEW
+        glazing_flag: int | None = None,             # NEW
+        is_electric_heating: int | None = None,      # NEW
+        is_gas: int | None = None,                   # NEW
+        is_oil: int | None = None,                   # NEW
+        is_solid_fuel: int | None = None,            # NEW
+        is_off_gas: int | None = None,               # NEW
         crs: Optional[str] = None,
     ) -> None:
-        # initialise GeoAgent first (handles geometry + spatial index)
         super().__init__(model=model, geometry=geometry, crs=crs)
 
-        # domain attributes
+        # identity & static attributes
         self.unique_id: str = unique_id
         self.property_type: str = property_type.strip().lower()
         self.sap_rating: float = sap_rating
-        self.energy_demand: float = energy_demand
+
+        # NEW: prefer calibrated annual kWh; keep legacy alias for compatibility
+        self.annual_energy_kwh: float = float(annual_energy_kwh)  # NEW
+        self.energy_demand: float = self.annual_energy_kwh        # NEW (legacy alias)
 
         # per-tick state – cleared by model.step()
         self.energy_consumption: float = 0.0
@@ -125,44 +123,105 @@ class HouseholdAgent(mg.GeoAgent):
         self.climate_heating_kWh: float = 0.0
         self.climate_cooling_kWh: float = 0.0
 
-    # ------------------------------------------------------------------
-    #  Convenience helpers used by the model each tick
-    # ------------------------------------------------------------------
+        # NEW: attach core drivers (kept raw; used in calc/reporters)
+        self.floor_area_m2 = None if floor_area_m2 is None else float(floor_area_m2)    # NEW
+        self.property_age  = (property_age or "").strip().lower() if property_age else None  # NEW
+        self.main_fuel_type = (main_fuel_type or "").strip().lower() if main_fuel_type else None  # NEW
+        self.main_heating_system = (main_heating_system or "").strip().lower() if main_heating_system else None  # NEW
+        self.retrofit_envelope_score = None if retrofit_envelope_score is None else float(retrofit_envelope_score)  # NEW
+        self.imd_decile = None if imd_decile is None else float(imd_decile)  # NEW
 
-    def reset_energy(self) -> None:
-        """Clear the per-hour accumulator before a new model step."""
-        self.energy_consumption = 0.0
-        # reset climate contributions (ambient_tempC is overwritten later)
-        self.climate_heating_kWh = 0.0
-        self.climate_cooling_kWh = 0.0
+        # NEW: policy levers (coerce to 0/1 where appropriate)
+        def _b(v):  # NEW
+            try:
+                return int(v) if v is not None else 0
+            except Exception:
+                return 0
 
-    def calc_base_energy(self) -> float:
-        """Return *hourly* base load in kWh for this property.
+        self.heating_controls = (heating_controls or "").strip().lower() if heating_controls else None  # NEW
+        self.meter_type = (meter_type or "").strip().lower() if meter_type else None  # NEW
+        self.cwi_flag = _b(cwi_flag)                # NEW
+        self.swi_flag = _b(swi_flag)                # NEW
+        self.loft_ins_flag = _b(loft_ins_flag)      # NEW
+        self.floor_ins_flag = _b(floor_ins_flag)    # NEW
+        self.glazing_flag = _b(glazing_flag)        # NEW
+        self.is_electric_heating = _b(is_electric_heating)  # NEW
+        self.is_gas = _b(is_gas)                    # NEW
+        self.is_oil = _b(is_oil)                    # NEW
+        self.is_solid_fuel = _b(is_solid_fuel)      # NEW
+        self.is_off_gas = _b(is_off_gas)            # NEW
 
-        Adjusts the raw EST annual demand by:
-        1. SAP rating (penalise < 50  | bonus > 80)
-        2. archetype multiplier (terrace vs detached …)
-        """
-        base = float(self.energy_demand)
+        # NEW: fast occupancy counter (maintained by PersonAgent.step)
+        self.occupancy_count: int = 0  # NEW
 
+        # NEW: precompute hourly base once (big speed win)
+        self._hourly_base_kwh: float = self._compute_hourly_base_kwh()  # NEW
+
+    # NEW: compute static hourly base from structure/levers (called once)
+    def _compute_hourly_base_kwh(self) -> float:  # NEW
+        base = float(getattr(self, "annual_energy_kwh", self.energy_demand))
         # SAP adjustment
         if self.sap_rating < 50:
             base *= 1.20
         elif self.sap_rating > 80:
             base *= 0.80
-
-        # archetype multiplier
+        # archetype
         base *= PROPERTY_TYPE_MULTIPLIER.get(self.property_type, 1.0)
-
-        # convert annual kWh  →  hourly kWh
+        # floor area scaling
+        if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
+            scale = max(0.6, min(2.0, self.floor_area_m2 / 90.0))
+            base *= scale
+        # envelope quality (0–1 → up to -20%)
+        if self.retrofit_envelope_score is not None:
+            env_mult = 1.0 - 0.20 * max(0.0, min(1.0, self.retrofit_envelope_score))
+            base *= env_mult
+        # heating system / fuel nudges
+        fuel = (self.main_fuel_type or "")
+        heat = (self.main_heating_system or "")
+        if "electric" in fuel:
+            base *= 1.05
+        if "heat pump" in heat:
+            base *= 0.85
+        # policy levers (stackable)
+        lever_mult = 1.0
+        if self.cwi_flag:      lever_mult *= 0.92
+        if self.swi_flag:      lever_mult *= 0.90
+        if self.loft_ins_flag: lever_mult *= 0.95
+        if self.floor_ins_flag:lever_mult *= 0.96
+        if self.glazing_flag:  lever_mult *= 0.96
+        hc = (self.heating_controls or "")
+        if "programmer and thermostat" in hc:
+            lever_mult *= 0.97
+        elif "programmer only" in hc:
+            lever_mult *= 0.99
+        if (self.meter_type or "").startswith("smart"):
+            lever_mult *= 0.98
+        if self.is_off_gas:
+            lever_mult *= 1.05
+        base *= lever_mult
         return base / 365 / 24
+
+    def refresh_hourly_base(self) -> None:  # NEW: call if levers change mid-run
+        self._hourly_base_kwh = self._compute_hourly_base_kwh()  # NEW
+
+    # ------------------------------------------------------------------
+    #  Convenience helpers used by the model each tick
+    # ------------------------------------------------------------------
+
+    def reset_energy(self) -> None:
+        self.energy_consumption = 0.0
+        self.climate_heating_kWh = 0.0
+        self.climate_cooling_kWh = 0.0
+
+    def calc_base_energy(self) -> float:
+        # NEW: return cached hourly base (computed once)
+        return self._hourly_base_kwh  # NEW
 
     # ------------------------------------------------------------------
     #  Climate integration – called by the model
     # ------------------------------------------------------------------
 
     def set_climate_index(self, idx: int) -> None:
-        """Remember which climate grid point this dwelling uses."""
         self.clim_idx = int(idx)
 
     def apply_climate(
@@ -173,32 +232,13 @@ class HouseholdAgent(mg.GeoAgent):
         cooling_threshold: float,
         heat_slope: float,
         cool_slope: float,
-        occupancy: Optional[int] = None,
-    ) -> None:
-        """Update ambient temp and add climate-driven kWh to this dwelling.
-
-        Parameters
-        ----------
-        tempC : float
-            Ambient outdoor temperature for this dwelling (°C).
-        heating_setpoint : float
-            Comfort baseline where heating demand begins (°C).
-        cooling_threshold : float
-            Temperature above which cooling demand begins (°C).
-        heat_slope : float
-            kWh added per °C of heating degree-hours.
-        cool_slope : float
-            kWh added per °C of cooling degree-hours.
-        occupancy : Optional[int]
-            Number of residents at home (if provided, can downweight loads).
-        """
+        occupancy: Optional[int] = None,) -> None:
         self.ambient_tempC = float(tempC)
         if not math.isfinite(self.ambient_tempC):
             self.climate_heating_kWh = 0.0
             self.climate_cooling_kWh = 0.0
             return
 
-        # degree-hours
         hd = max(0.0, heating_setpoint - self.ambient_tempC)
         cd = max(0.0, self.ambient_tempC - cooling_threshold)
 
@@ -220,15 +260,7 @@ class HouseholdAgent(mg.GeoAgent):
 # ────────────────────────────────────────────────────────────────────
 
 class PersonAgent(mesa.Agent):
-    """Individual resident whose presence drives stochastic load spikes.
-
-    Energy is *added to the household* each hour:
-
-    * at_home  →  ``energy_per_person_home``  (scaled by wealth + SAP)
-    * away     →  ``energy_per_person_away``  (standby baseline)
-
-    The model, not the agent, aggregates these per-person spikes.
-    """
+    """Individual resident whose presence drives stochastic load spikes."""
 
     def __init__(
         self,
@@ -244,57 +276,45 @@ class PersonAgent(mesa.Agent):
     ) -> None:
         super().__init__(model=model)
 
-        # identity and environment
         self.unique_id: str = unique_id
         self.home: HouseholdAgent = home
 
-        # daily routine
         self.schedule_profile: str = schedule_profile
         self.leave_hour: Optional[int] = leave_hour
         self.return_hour: Optional[int] = return_hour
         self.at_home: bool = True   # updated each tick
 
-        # socio-economic factors
         self.wealth: str = wealth or "medium"
         self.sap: float = sap if sap is not None else home.sap_rating
 
-        # per-hour energy contribution (saved by DataCollector)
         self.energy: float = 0.0
-
-    # ------------------------------------------------------------------
-    #  Agent behaviour – called once per simulation step
-    # ------------------------------------------------------------------
 
     def step(self) -> None:
         """Update presence status and add corresponding kWh to household."""
-        # Allow model to provide a local clock if available; fall back to modulo.
         hour = self.model.local_hour() if hasattr(self.model, "local_hour") else self.model.current_hour % 24
 
-        # ---------------- presence logic ----------------
+        # presence logic with occupancy counter updates  # NEW
         if self.leave_hour is None or self.return_hour is None:
-            self.at_home = True  # Homebody stays inside
+            self.at_home = True
         else:
             if self.at_home and hour == self.leave_hour:
                 self.at_home = False
+                self.home.occupancy_count -= 1   # NEW
             elif (not self.at_home) and hour == self.return_hour:
                 self.at_home = True
+                self.home.occupancy_count += 1   # NEW
 
-        # ---------------- energy spike ------------------
+        # energy spike
         base_spike = self.model.energy_per_person_home
-
-        # wealth factor
         if self.wealth == "high":
             base_spike *= 1.3
         elif self.wealth == "low":
             base_spike *= 0.8
-
-        # interplay with dwelling SAP (very efficient homes temper spikes)
         if self.sap < 50:
             base_spike *= 1.2
         elif self.sap > 80:
             base_spike *= 0.8
 
-        # add to household & record own consumption
         if self.at_home:
             self.home.energy_consumption += base_spike
             self.energy = base_spike

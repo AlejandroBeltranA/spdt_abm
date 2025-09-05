@@ -14,6 +14,8 @@ Each tick = 1 hour. The model:
 * records per-step metrics via Mesa’s DataCollector.
 """
 
+
+
 from __future__ import annotations
 
 import random
@@ -32,7 +34,6 @@ from .agent import HouseholdAgent, PersonAgent, PROPERTY_TYPES, SCHEDULE_PROFILE
 class EnergyModel(mesa.Model):
     """Agent-based model of hourly residential energy demand."""
 
-    # optional: used by Mesa-Geo visualisation if GeoJSON was not supplied
     geojson_regions: str = "data/ncc_neighborhood.geojson"
 
     def __init__(
@@ -44,58 +45,69 @@ class EnergyModel(mesa.Model):
         climate_start: str | np.datetime64 | pd.Timestamp | None = None,
         local_tz: str = "Europe/London",
         level_scale: float = 1.0,
-        collect_agent_level: bool = True
+        collect_agent_level: bool = True,
+        agent_collect_every: int = 24,  # NEW: downsample agent collection (hours)
     ):
         super().__init__()
 
-        # Tick counter (0, 1, …) → hour of simulation
         self.current_hour: int = 0
-
-        # Containers for easy iteration
         self.household_agents: List[HouseholdAgent] = []
         self.person_agents: List[PersonAgent] = []
 
-        # Spatial index for visualisation / spatial queries (mesa-geo)
         if gdf is None:
             raise ValueError("EnergyModel requires a GeoDataFrame `gdf`.")
         self.space = mg.GeoSpace(crs=gdf.crs)
 
-        # Global parameters (tunable)
-        self.energy_per_person_home: float = 1.5  # kWh/h if person is home
-        self.energy_per_person_away: float = 0.5  # kWh/h standby while away
+        self.energy_per_person_home: float = 1.5
+        self.energy_per_person_away: float = 0.5
 
-        # Simple climate→load coupling (tunable)
         self.heating_setpoint_C: float = 18.5
         self.cooling_threshold_C: float = 24.0
         self.heating_slope_kWh_per_deg: float = 0.10
         self.cooling_slope_kWh_per_deg: float = 0.08
 
-        # Per-category accumulators (reset every tick by step())
         self.energy_by_type: Dict[str, float] = {t: 0.0 for t in PROPERTY_TYPES}
-        self.energy_by_wealth: Dict[str, float] = dict.fromkeys(
-            ["high", "medium", "low"], 0.0
-        )
-
-        # Total across *all* hours – useful for dashboards / KPIs
+        self.energy_by_wealth: Dict[str, float] = dict.fromkeys(["high", "medium", "low"], 0.0)
         self.cumulative_energy: float = 0.0
 
-        # --- climate hook ---------------------------------
         self.climate: Optional[ClimateField] = None
         self._clim_idx_per_house: Optional[np.ndarray] = None
         self._t0: int = 0
 
         if climate_parquet:
-            self.climate = ClimateField(climate_parquet)  # loads T×P arrays
+            self.climate = ClimateField(climate_parquet)
 
         # ------------- 1. instantiate households --------------------
         for _, row in gdf.iterrows():
             house = HouseholdAgent(
-                unique_id=row["fid"],
+                unique_id=str(row.get("UPRN", row.get("uprn", row.get("fid")))),  # NEW: UPRN-friendly
                 model=self,
                 geometry=row["geometry"],
+                # core
                 property_type=row.get("property_type", ""),
                 sap_rating=row.get("sap_rating", 70),
-                energy_demand=row.get("energy_demand", 10_000),
+                # prefer calibrated demand; fallback to legacy if missing
+                annual_energy_kwh=row.get("energy_cal_kwh", row.get("energy_demand", 10_000)),
+                # drivers
+                floor_area_m2=row.get("floor_area_m2"),
+                property_age=row.get("property_age"),
+                main_fuel_type=row.get("main_fuel_type"),
+                main_heating_system=row.get("main_heating_system"),
+                retrofit_envelope_score=row.get("retrofit_envelope_score"),
+                imd_decile=row.get("imd_decile"),
+                # levers / context
+                heating_controls=row.get("heating_controls"),
+                meter_type=row.get("meter_type"),
+                cwi_flag=row.get("cwi_flag"),
+                swi_flag=row.get("swi_flag"),
+                loft_ins_flag=row.get("loft_ins_flag"),
+                floor_ins_flag=row.get("floor_ins_flag"),
+                glazing_flag=row.get("glazing_flag"),
+                is_electric_heating=row.get("is_electric_heating"),
+                is_gas=row.get("is_gas"),
+                is_oil=row.get("is_oil"),
+                is_solid_fuel=row.get("is_solid_fuel"),
+                is_off_gas=row.get("is_off_gas"),
                 crs=gdf.crs,
             )
             self.household_agents.append(house)
@@ -103,34 +115,39 @@ class EnergyModel(mesa.Model):
 
         # Ensure geometry is centroided for clarity (and consistent mapping)
         for h in self.household_agents:
-            h.geometry = h.geometry.buffer(0).centroid
+            g = getattr(h, "geometry", None)
+            if g is None or g.is_empty:
+                continue
+            if g.geom_type == "Point":
+                continue
+            try:
+                gg = g.buffer(0)
+            except Exception:
+                gg = g
+            if gg.is_empty:
+                gg = g.representative_point()
+                h.geometry = gg
+            else:
+                h.geometry = gg.centroid
 
         # ✅ Map climate ONCE (after houses exist) and assign per-house index
         if self.climate is not None:
-            lats = np.fromiter(
-                (h.geometry.y for h in self.household_agents),
-                dtype=np.float32,
-                count=len(self.household_agents),
-            )
-            lons = np.fromiter(
-                (h.geometry.x for h in self.household_agents),
-                dtype=np.float32,
-                count=len(self.household_agents),
-            )
-            self._clim_idx_per_house = self.climate.map_households(lats, lons)
-            for h, idx in zip(self.household_agents, self._clim_idx_per_house):
-                h.set_climate_index(idx)
+            valid_houses = [h for h in self.household_agents
+                            if getattr(h, "geometry", None) is not None and not h.geometry.is_empty]
+            lats = np.fromiter((h.geometry.y for h in valid_houses), dtype=np.float32, count=len(valid_houses))
+            lons = np.fromiter((h.geometry.x for h in valid_houses), dtype=np.float32, count=len(valid_houses))
+            if len(valid_houses) > 0:
+                self._clim_idx_per_house = self.climate.map_households(lats, lons)
+                for h, idx in zip(valid_houses, self._clim_idx_per_house):
+                    h.set_climate_index(idx)
 
-            # align start time
             if climate_start is None:
                 climate_start = self.climate.times[0]
             self._t0 = self.climate.time_index_for(climate_start)
 
-            # initialise ambient field
             for h in self.household_agents:
                 h.ambient_tempC = float("nan")
 
-        # Optional: local clock (used by PersonAgent if available)
         self._local_tz = local_tz
         self._clock0 = 0
         if climate_start is not None:
@@ -156,6 +173,9 @@ class EnergyModel(mesa.Model):
                 )
                 self.person_agents.append(person)
                 house.residents.append(person)
+                # NEW: initial occupancy count (Homebody or pre-first-leave)
+                if getattr(person, "at_home", True):  # NEW
+                    house.occupancy_count += 1         # NEW
                 uid_counter += 1
 
         # ------------- 3. DataCollector set-up ----------------------
@@ -180,18 +200,45 @@ class EnergyModel(mesa.Model):
             "ambient_tempC": lambda a: getattr(a, "ambient_tempC", float("nan")),
             "climate_heating_kWh": lambda a: getattr(a, "climate_heating_kWh", 0.0),
             "climate_cooling_kWh": lambda a: getattr(a, "climate_cooling_kWh", 0.0),
+            # static attributes for analysis
+            "property_type": lambda a: getattr(a, "property_type", None),
+            "sap_rating": lambda a: getattr(a, "sap_rating", None),
+            "annual_energy_kwh": lambda a: getattr(a, "annual_energy_kwh", None),
+            "floor_area_m2": lambda a: getattr(a, "floor_area_m2", None),
+            "property_age": lambda a: getattr(a, "property_age", None),
+            "main_fuel_type": lambda a: getattr(a, "main_fuel_type", None),
+            "main_heating_system": lambda a: getattr(a, "main_heating_system", None),
+            "retrofit_envelope_score": lambda a: getattr(a, "retrofit_envelope_score", None),
+            "imd_decile": lambda a: getattr(a, "imd_decile", None),
+            "heating_controls": lambda a: getattr(a, "heating_controls", None),
+            "meter_type": lambda a: getattr(a, "meter_type", None),
+            "cwi_flag": lambda a: getattr(a, "cwi_flag", None),
+            "swi_flag": lambda a: getattr(a, "swi_flag", None),
+            "loft_ins_flag": lambda a: getattr(a, "loft_ins_flag", None),
+            "floor_ins_flag": lambda a: getattr(a, "floor_ins_flag", None),
+            "glazing_flag": lambda a: getattr(a, "glazing_flag", None),
+            "is_off_gas": lambda a: getattr(a, "is_off_gas", None),
+            "is_electric_heating": lambda a: getattr(a, "is_electric_heating", None),
+            "is_gas": lambda a: getattr(a, "is_gas", None),
+            "is_oil": lambda a: getattr(a, "is_oil", None),
+            "is_solid_fuel": lambda a: getattr(a, "is_solid_fuel", None),
         }
 
-        self.datacollector = mesa.DataCollector(
-            model_reporters=model_reporters,
-            agent_reporters=agent_reporters,
-        )
+        # NEW: split collectors → model every step; agent downsampled
+        self.model_dc = mesa.DataCollector(model_reporters=model_reporters)  # NEW
+        self.agent_dc = None  # NEW
+        if collect_agent_level:  # NEW
+            self.agent_dc = mesa.DataCollector(agent_reporters=agent_reporters)  # NEW
+        self.agent_collect_every = max(1, int(agent_collect_every))  # NEW
 
+        # NEW: backward-compat alias (so existing code referencing .datacollector still works for model-level)
+        self.datacollector = self.model_dc  # NEW
 
         # initial snapshot (t = 0)
-        self.datacollector.collect(self)
+        self.model_dc.collect(self)
+        if self.agent_dc is not None and (self.current_hour % self.agent_collect_every == 0):  # NEW
+            self.agent_dc.collect(self)  # NEW
 
-    # Convenience: local wall-clock hour (respects climate_start + local_tz)
     def local_hour(self) -> int:
         return int((self._clock0 + self.current_hour) % 24)
 
@@ -202,25 +249,24 @@ class EnergyModel(mesa.Model):
         """Advance simulation by one hour."""
         self.current_hour += 1
 
-        # --- 1. reset + add base load for each dwelling ------------
+        # 1) reset + add precomputed base load
         for h in self.household_agents:
             h.reset_energy()
             h.energy_consumption += h.calc_base_energy()
 
-        # --- 2. update every resident (presence + load spikes) -----
+        # 2) update residents
         for p in self.person_agents:
             p.step()
 
-        # --- 3. climate sampling + apply per dwelling --------------
+        # 3) climate sampling + apply per dwelling
         if self.climate is not None and self._clim_idx_per_house is not None:
-            t = self._t0 + (self.current_hour - 1)  # -1 because we collected at init
+            t = self._t0 + (self.current_hour - 1)
             if 0 <= t < len(self.climate.times):
                 vecP = self.climate.temps_at_index(t)  # shape [P]
                 for h in self.household_agents:
                     idx = h.clim_idx
                     tempC = float(vecP[idx]) if idx is not None else float("nan")
-                    # simple occupancy count (optional dampening inside apply_climate)
-                    occ = sum(1 for r in h.residents if getattr(r, "at_home", False))
+                    occ = h.occupancy_count  # NEW: fast counter (no per-hour loop)
                     h.apply_climate(
                         tempC,
                         heating_setpoint=self.heating_setpoint_C,
@@ -230,7 +276,6 @@ class EnergyModel(mesa.Model):
                         occupancy=occ,
                     )
             else:
-                # out of climate range; mark as NaN and add no climate kWh
                 for h in self.household_agents:
                     h.apply_climate(
                         float("nan"),
@@ -240,7 +285,7 @@ class EnergyModel(mesa.Model):
                         cool_slope=self.cooling_slope_kWh_per_deg,
                     )
 
-        # --- 4. aggregate by property type + wealth group ----------
+        # 4) aggregate by property type + wealth group
         self.energy_by_type = {t: 0.0 for t in PROPERTY_TYPES}
         for h in self.household_agents:
             ptype = getattr(h, "property_type", "")
@@ -251,9 +296,11 @@ class EnergyModel(mesa.Model):
         for p in self.person_agents:
             self.energy_by_wealth[p.wealth] += p.energy
 
-        # --- 5. cumulative total ----------------------------------
+        # 5) cumulative total
         tick_total = sum(h.energy_consumption for h in self.household_agents)
         self.cumulative_energy += tick_total
 
-        # --- 6. record everything ---------------------------------
-        self.datacollector.collect(self)
+        # 6) collect
+        self.model_dc.collect(self)
+        if self.agent_dc is not None and (self.current_hour % self.agent_collect_every == 0):  # NEW
+            self.agent_dc.collect(self)  # NEW
