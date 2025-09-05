@@ -238,3 +238,48 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS cruft
+**/.DS_Store
+
+# Envs & caches
+.venv/
+venv/
+esa_mesa/
+__pycache__/
+**/.DS_Store
+.ipynb_checkpoints/
+
+# Sensitive data
+/data/**
+!/data/.gitkeep
+!/data/README.md
+
+# Results / artefacts
+/results/**
+*.parquet
+*.csv
+*.pkl
+*.png
+*.html
+
+# Build metadata
+*.egg-info/
+**/.DS_Store
+*.egg-info/
+__pycache__/
+.venv/
+venv/
+esa_mesa/
+results/**
+/data/**
+!/data/.gitkeep
+!/data/README.md
+.ipynb_checkpoints/
+build/
+dist/
+*.parquet
+*.csv
+*.pkl
+*.png
+*.html
