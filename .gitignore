@@ -238,3 +238,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS cruft
+**/.DS_Store
