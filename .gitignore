@@ -265,3 +265,21 @@ __pycache__/
 
 # Build metadata
 *.egg-info/
+**/.DS_Store
+*.egg-info/
+__pycache__/
+.venv/
+venv/
+esa_mesa/
+results/**
+/data/**
+!/data/.gitkeep
+!/data/README.md
+.ipynb_checkpoints/
+build/
+dist/
+*.parquet
+*.csv
+*.pkl
+*.png
+*.html
