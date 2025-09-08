@@ -58,8 +58,8 @@ class EnergyModel(mesa.Model):
             raise ValueError("EnergyModel requires a GeoDataFrame `gdf`.")
         self.space = mg.GeoSpace(crs=gdf.crs)
 
-        self.energy_per_person_home: float = 0.06
-        self.energy_per_person_away: float = 0.01
+        self.energy_per_person_home: float = 1.5
+        self.energy_per_person_away: float = 0.5
 
         self.heating_setpoint_C: float = 18.5
         self.cooling_threshold_C: float = 24.0
