@@ -14,6 +14,7 @@ pyarrow                   # fast Parquet read/write for pandas
 matplotlib                # static plots (line, bar, heat-map)
 folium                    # interactive Leaflet maps
 contextily                # background tiles for hex-bin basemap
+plotly
 
 # --- Utility -------------------------------------------------------
 cloudpickle               # serialise full Mesa model objects for replay
