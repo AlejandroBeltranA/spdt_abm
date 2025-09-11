@@ -1,10 +1,9 @@
-# Household‑Energy ABM — Partner Operations Guide (Draft)
+# Household‑Energy ABM — Partner Operations Guide 
 
 > **Purpose.** A shareable, partner‑facing software document explaining how to install, configure, run, and validate the Household‑Energy ABM; it also records key assumptions, data requirements, and outputs.
 
 > **Audience.** Data/analytics teams at local authorities, utilities, and research partners. We assume basic familiarity with Python and GIS data.
 
----
 
 ## 1) What this software does
 
@@ -31,7 +30,6 @@ data/                        # 🔒 Git‑ignored sensitive inputs
 results/                     # Model outputs (git‑ignored)
 ```
 
----
 
 ## 2) Assumptions & scope
 
@@ -55,7 +53,6 @@ This section captures **what the model expects** and **what it does not cover**.
 * Outputs in `results/` are safe to share unless they breach partner‑specific disclosure rules.
 
 
----
 
 ## 3) System requirements
 
@@ -64,7 +61,7 @@ This section captures **what the model expects** and **what it does not cover**.
 * **RAM:** 8–16 GB recommended for neighbourhood‑scale runs; increase for city‑wide.
 * **Disk:** Allow several GB for multi‑year hourly outputs.
 
----
+
 
 ## 4) Installation
 
@@ -78,7 +75,6 @@ pip install -e .
 ```
 
 
----
 
 ## 5) Data preparation
 
@@ -107,7 +103,6 @@ COMING SOON
 
 Use `notebooks/01-climate-prep.ipynb` to build an **hourly** parquet with at least ambient temperature. Save to `data/hourly_climate.parquet` (or configure another path when running).
 
----
 
 ## 6) Running the model (headless)
 
@@ -175,7 +170,6 @@ solara run household_energy/server.py
 
 > Note: The dashboard for the full sample is still being stabilised. If you encounter errors, see Troubleshooting.
 
----
 
 ## 8) Offline analysis (static reports)
 
@@ -203,7 +197,6 @@ python -m household_energy.analyze \
 * `plot_day_hour.png` – demand matrix (day × hour).
 * `high_usage_map.html` – interactive Leaflet map of highest‑usage dwellings.
 
----
 
 ## 9) Validation vs DESNZ (2020–2023)
 
@@ -223,7 +216,6 @@ Open `notebooks/02-energy-model-tests.ipynb` and:
 
 
 
----
 
 ## 10) Data dictionary (DRAFT)
 
@@ -237,7 +229,6 @@ Open `notebooks/02-energy-model-tests.ipynb` and:
 |               … | …       | …             | …                                          |     …    |
 
 
----
 
 ## 11) Reproducibility & performance
 
@@ -245,7 +236,6 @@ Open `notebooks/02-energy-model-tests.ipynb` and:
 * **Chunked runs:** For multi‑year periods, prefer the UTC windowed mode; consider running per‑year to bound memory and then concatenating outputs.
 
 
----
 
 ## 12) Troubleshooting
 
@@ -256,19 +246,16 @@ Open `notebooks/02-energy-model-tests.ipynb` and:
 
 
 
----
 
 ## 13) Governance & licensing
 
 
 
----
 
 ## 14) Change log (excerpt)
 
-* **v0.1 (Draft):** Initial partner guide; adds assumptions, data dictionary template, troubleshooting.
+* **v0.1.0 (Draft):** Initial partner guide; adds assumptions, data dictionary template, troubleshooting.
 
----
 
 ## 15) Appendix — Quickstart checklist
 
