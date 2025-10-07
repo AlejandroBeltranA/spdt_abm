@@ -254,6 +254,9 @@ __pycache__/
 /data/**
 !/data/.gitkeep
 !/data/README.md
+!/data/LICENSE*        # allow LICENSE / LICENSE.md
+
+
 
 # Results / artefacts
 /results/**
