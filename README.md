@@ -168,6 +168,33 @@ Creates:
 
 ---
 
+## Per-house math (plain text)
+
+Each dwelling, each hour:
+
+1) **Baseline** (optionally scaled):
+   - Start from calibrated annual `E_ann`.
+   - If `apply_structural_multipliers=True`, multiply by SAP/ptype/area/envelope/control/system nudges, then divide by 365*24:
+     `E_base_h = (E_ann * M_struct) / (365*24)`
+   - If False, use `E_ann/(365*24)` directly.
+
+2) **Climate load**:
+   - Heating degree: `HD = max(0, (T_set - T_out) - db)`
+   - Cooling degree: `CD = max(0, (T_out - T_cool) - db)`
+   - Per-dwelling heating slope `slope_h` from archetype/SAP/area/retro/noise.
+   - Heat-pump factor `M_HP = boiler_efficiency / COP` (flat COP today).
+   - `E_climate_h = HD * slope_h * M_HP + CD * slope_cool` (dampened if empty).
+
+3) **Occupancy/appliance spikes**:
+   - `E_spike_h = sum_per_person(E_home_or_away)` with per-person spikes adjusted by wealth/SAP.
+
+4) **Total per hour**:
+   - `E_hh_h = E_base_h + E_climate_h + E_spike_h`
+
+Annual per dwelling = sum over 8,760 hours; area totals = sum over dwellings. Scenario deltas (e.g., heat-pump adoption): `DeltaE = E_scenario - E_default`; £ savings = `-DeltaE * tariff`.
+
+---
+
 ## Validation vs DESNZ (2020–2023) (COMING SOON)
 
 Use `notebooks/02-energy-model-tests.ipynb`:
@@ -191,4 +218,3 @@ Use `notebooks/02-energy-model-tests.ipynb`:
 - See `requirements.txt` / `pyproject.toml` for exact versions.
 
 ---
-

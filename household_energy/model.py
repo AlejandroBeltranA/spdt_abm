@@ -29,6 +29,7 @@ import pandas as pd  # for timezone handling
 
 from .climate import ClimateField
 from .agent import HouseholdAgent, PersonAgent, PROPERTY_TYPES, SCHEDULE_PROFILES
+from .config import load_config, ModelConfig
 
 
 class EnergyModel(mesa.Model):
@@ -47,6 +48,7 @@ class EnergyModel(mesa.Model):
         level_scale: float = 1.0,
         collect_agent_level: bool = True,
         agent_collect_every: int = 24,  # NEW: downsample agent collection (hours)
+        config_path: str | None = None,
     ):
         super().__init__()
 
@@ -58,13 +60,26 @@ class EnergyModel(mesa.Model):
             raise ValueError("EnergyModel requires a GeoDataFrame `gdf`.")
         self.space = mg.GeoSpace(crs=gdf.crs)
 
-        self.energy_per_person_home: float = 1.5
-        self.energy_per_person_away: float = 0.5
+        # Scenario/config (externalizable)
+        self.config: ModelConfig = load_config(config_path)
 
-        self.heating_setpoint_C: float = 18.5
-        self.cooling_threshold_C: float = 24.0
-        self.heating_slope_kWh_per_deg: float = 0.10
-        self.cooling_slope_kWh_per_deg: float = 0.08
+        self.energy_per_person_home: float = float(self.config.model.get("energy_per_person_home", 0.06))
+        self.energy_per_person_away: float = float(self.config.model.get("energy_per_person_away", 0.01))
+
+        self.heating_setpoint_C: float = float(self.config.model.get("heating_setpoint_C", 18.5))
+        self.cooling_threshold_C: float = float(self.config.model.get("cooling_threshold_C", 24.0))
+        self.heating_slope_kWh_per_deg: float = float(self.config.model.get("heating_slope_kWh_per_deg", 0.05))
+        self.cooling_slope_kWh_per_deg: float = float(self.config.model.get("cooling_slope_kWh_per_deg", 0.03))
+        self.apply_structural_multipliers: bool = bool(self.config.model.get("apply_structural_multipliers", True))
+
+        # --------------- NEW: heat pump params --------------------
+        self.boiler_efficiency = 0.90       # for hp effectiveness (boiler η)
+        self.heatpump_cop_ref  = 2.8        # simple, flat COP for now
+        self.heatpump_adoption_rate = 0.0   # 0..1 of eligible homes (or dict per class)
+        self.heatpump_class_weight = {
+            "priority": 1.4, "possible": 1.0, "difficult": 0.6,
+            "non-possible": 0.0, None: 1.0,
+        }
 
         self.energy_by_type: Dict[str, float] = {t: 0.0 for t in PROPERTY_TYPES}
         self.energy_by_wealth: Dict[str, float] = dict.fromkeys(["high", "medium", "low"], 0.0)
@@ -73,6 +88,10 @@ class EnergyModel(mesa.Model):
         self.climate: Optional[ClimateField] = None
         self._clim_idx_per_house: Optional[np.ndarray] = None
         self._t0: int = 0
+
+        # Config metadata (propagated to outputs for traceability)
+        self.config_name: str = self.config.name
+        self.config_date: str = self.config.date
 
         if climate_parquet:
             self.climate = ClimateField(climate_parquet)
@@ -87,7 +106,10 @@ class EnergyModel(mesa.Model):
                 property_type=row.get("property_type", ""),
                 sap_rating=row.get("sap_rating", 70),
                 # prefer calibrated demand; fallback to legacy if missing
-                annual_energy_kwh=row.get("energy_cal_kwh", row.get("energy_demand", 10_000)),
+                annual_energy_kwh=row.get(
+                    "energy_cal_kwh",
+                    row.get("energy_demand_kwh", row.get("energy_demand", 10_000)),
+                ),
                 # drivers
                 floor_area_m2=row.get("floor_area_m2"),
                 property_age=row.get("property_age"),
@@ -108,6 +130,9 @@ class EnergyModel(mesa.Model):
                 is_oil=row.get("is_oil"),
                 is_solid_fuel=row.get("is_solid_fuel"),
                 is_off_gas=row.get("is_off_gas"),
+                # NEW: heat pump candidate inputs (from your DataFrame)
+                is_heatpump_candidate=row.get("is_heatpump_candidate"),
+                heatpump_candidate_class=row.get("heatpump_candidate_class"),
                 crs=gdf.crs,
             )
             self.household_agents.append(house)
@@ -148,6 +173,13 @@ class EnergyModel(mesa.Model):
             for h in self.household_agents:
                 h.ambient_tempC = float("nan")
 
+        # --- assign heat pumps according to policy (runs once) ---  NEW
+        self.boiler_efficiency = float(self.config.model.get("boiler_efficiency", self.boiler_efficiency))
+        self.heatpump_cop_ref = float(self.config.model.get("heatpump_cop_ref", self.heatpump_cop_ref))
+        self.heatpump_adoption_rate = self.config.model.get("heatpump_adoption_rate", self.heatpump_adoption_rate)
+        self.heatpump_class_weight.update(self.config.model.get("heatpump_class_weight", {}))
+        self._assign_heatpumps()
+
         self._local_tz = local_tz
         self._clock0 = 0
         if climate_start is not None:
@@ -156,9 +188,12 @@ class EnergyModel(mesa.Model):
 
         # ------------- 2. instantiate residents ---------------------
         uid_counter = 0
+        # pick schedule profiles (config override or legacy)
+        sched_profiles = self.config.schedules.get("default_profiles") or SCHEDULE_PROFILES
+
         for house in self.household_agents:
             for _ in range(n_residents_func(house)):
-                profile = random.choice(SCHEDULE_PROFILES)
+                profile = random.choice(sched_profiles)
                 wealth = random.choice(["high", "medium", "low"])
 
                 person = PersonAgent(
@@ -191,6 +226,9 @@ class EnergyModel(mesa.Model):
                 np.nanmean([getattr(h, "ambient_tempC", np.nan) for h in m.household_agents])
             ),
             "climate_hour_index": lambda m: m.current_hour,
+            "config_name": lambda m: getattr(m, "config_name", ""),
+            "config_date": lambda m: getattr(m, "config_date", ""),
+            "config_notes": lambda m: getattr(m.config, "notes", ""),
         }
 
         agent_reporters = {} if not collect_agent_level else {
@@ -271,19 +309,21 @@ class EnergyModel(mesa.Model):
                         tempC,
                         heating_setpoint=self.heating_setpoint_C,
                         cooling_threshold=self.cooling_threshold_C,
-                        heat_slope=self.heating_slope_kWh_per_deg,
+                        heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg),  # CHANGED
                         cool_slope=self.cooling_slope_kWh_per_deg,
                         occupancy=occ,
                     )
+
             else:
                 for h in self.household_agents:
                     h.apply_climate(
                         float("nan"),
                         heating_setpoint=self.heating_setpoint_C,
                         cooling_threshold=self.cooling_threshold_C,
-                        heat_slope=self.heating_slope_kWh_per_deg,
+                        heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg),  # CHANGED
                         cool_slope=self.cooling_slope_kWh_per_deg,
                     )
+
 
         # 4) aggregate by property type + wealth group
         self.energy_by_type = {t: 0.0 for t in PROPERTY_TYPES}
@@ -304,3 +344,56 @@ class EnergyModel(mesa.Model):
         self.model_dc.collect(self)
         if self.agent_dc is not None and (self.current_hour % self.agent_collect_every == 0):  # NEW
             self.agent_dc.collect(self)  # NEW
+    def _assign_heatpumps(self) -> None:
+        """Assign heat pumps to top X% of eligible candidates (or per-class shares).
+        Scoring uses expected kWh reduction from lowering the heating slope via HP.
+        Deterministic (ties broken by object id). Skips homes that already had a HP.
+        """
+        rate = self.heatpump_adoption_rate
+        if not rate:
+            return
+
+        def hp_score(h: HouseholdAgent) -> float:
+            if not getattr(h, "is_heatpump_candidate", 0):
+                return -1.0
+            cls = getattr(h, "heatpump_candidate_class", "non-possible")
+            if cls == "non-possible":
+                return -1.0
+            # expected gain ~ slope * (1 - hp_effect_mult) * class_weight
+            slope = getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg)
+            hp_mult = getattr(h, "hp_effect_mult", self.boiler_efficiency / self.heatpump_cop_ref)
+            gain = max(0.0, slope * (1.0 - hp_mult))
+            w = self.heatpump_class_weight.get(cls, 1.0)
+            return gain * w
+
+        # Eligible (and not already HP at baseline)
+        elig = [
+            h for h in self.household_agents
+            if getattr(h, "is_heatpump_candidate", 0) == 1
+            and getattr(h, "heatpump_candidate_class", "non-possible") != "non-possible"
+            and not getattr(h, "was_heatpump_initial", False)
+        ]
+        if not elig:
+            return
+
+        # Case A: single global fraction
+        if isinstance(rate, (int, float)):
+            ranked = sorted(elig, key=lambda h: (-hp_score(h), id(h)))
+            n_take = int(len(ranked) * float(rate) + 1e-9)
+            for h in ranked[:n_take]:
+                h.has_heatpump = True
+            return
+
+        # Case B: per-class fractions, e.g. {"priority":0.45, "possible":0.20, "difficult":0.05}
+        if isinstance(rate, dict):
+            by_class = {"priority": [], "possible": [], "difficult": []}
+            for h in elig:
+                c = getattr(h, "heatpump_candidate_class", None)
+                if c in by_class:
+                    by_class[c].append(h)
+            for c, homes in by_class.items():
+                homes.sort(key=lambda h: (-hp_score(h), id(h)))
+                frac = float(rate.get(c, 0.0))
+                n_take = int(len(homes) * frac + 1e-9)
+                for h in homes[:n_take]:
+                    h.has_heatpump = True

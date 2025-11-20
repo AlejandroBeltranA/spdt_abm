@@ -1,0 +1,135 @@
+meta:
+  name: heat_pump_scenario
+  date: '2025-11-18'
+  notes: heat pump adoption scenario for testing, 30% adoption rate
+model:
+  local_tz: Europe/London
+  heating_setpoint_C: 18.5
+  cooling_threshold_C: 24.0
+  heating_slope_kWh_per_deg: 0.05
+  cooling_slope_kWh_per_deg: 0.03
+  energy_per_person_home: 0.06
+  energy_per_person_away: 0.01
+  setpoint_setback_C: 2.0
+  holiday_prob_daily: 0.002
+  boiler_efficiency: 0.9
+  heatpump_cop_ref: 2.8
+  heatpump_adoption_rate: 1
+  heatpump_class_weight:
+    priority: 1.4
+    possible: 1.0
+    difficult: 0.6
+    non-possible: 0.0
+  apply_structural_multipliers: true
+archetypes:
+  detached:
+    ua_mult: 1.2
+    area_mult_cap:
+    - 0.7
+    - 1.6
+    infiltration_mult: 1.1
+    thermal_mass_class: medium
+  semi-detached:
+    ua_mult: 1.05
+    area_mult_cap:
+    - 0.7
+    - 1.4
+    infiltration_mult: 1.0
+    thermal_mass_class: medium
+  terraced:
+    ua_mult: 0.95
+    area_mult_cap:
+    - 0.7
+    - 1.3
+    infiltration_mult: 0.95
+    thermal_mass_class: medium
+  flat:
+    ua_mult: 0.85
+    area_mult_cap:
+    - 0.6
+    - 1.2
+    infiltration_mult: 0.9
+    thermal_mass_class: light
+  bungalow:
+    ua_mult: 1.0
+    area_mult_cap:
+    - 0.7
+    - 1.4
+    infiltration_mult: 1.0
+    thermal_mass_class: light
+age_bands:
+  pre-1919:
+    ua_mult: 1.1
+    infiltration_mult: 1.1
+  1930-1980:
+    ua_mult: 1.0
+    infiltration_mult: 1.0
+  post-2000:
+    ua_mult: 0.9
+    infiltration_mult: 0.9
+controls:
+  programmer_and_thermostat: 0.97
+  programmer_only: 0.99
+  smart_meter: 0.98
+  trvs: 0.97
+  weather_compensation: 0.95
+  smart: 0.98
+envelope_levers:
+  cavity_wall: 0.92
+  solid_wall: 0.9
+  loft_insulation: 0.95
+  floor_insulation: 0.96
+  glazing: 0.96
+  airtightness_improvement: 0.95
+systems:
+  electric_heating:
+    level_mult: 1.05
+    heating_slope_mult: 1.0
+  heat_pump:
+    level_mult: 0.8
+    heating_slope_mult: 0.7
+    cop_curve:
+    - - 15
+      - 3.2
+    - - 7
+      - 2.8
+    - - 0
+      - 2.4
+    - - -5
+      - 2.0
+  gas_boiler:
+    level_mult: 1.0
+    heating_slope_mult: 1.0
+  storage_heater:
+    level_mult: 1.1
+    heating_slope_mult: 1.05
+  default:
+    level_mult: 1.0
+    heating_slope_mult: 1.0
+schedules:
+  default_profiles:
+  - name: Parent
+    leave: 7
+    return: 15
+  - name: Worker
+    leave: 9
+    return: 17
+  - name: Homebody
+    leave: null
+    return: null
+  wfh_share: 0.2
+appliance_loads:
+  base_kWh_per_day: 6.0
+  spike_kWh: 0.2
+  spike_per_person_per_day: 6
+  lighting_kWh_per_day: 2.0
+occupancy:
+  avg_persons: 2.3
+  persons_by_property_type:
+    flat: 1.8
+    terraced: 2.3
+    semi-detached: 2.6
+    detached: 2.9
+meters:
+  dual_rate_share: 0.0
+  heat_meter_share: 0.0

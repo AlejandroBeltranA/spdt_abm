@@ -85,6 +85,8 @@ class HouseholdAgent(mg.GeoAgent):
         main_heating_system: str | None = None,      # NEW
         retrofit_envelope_score: float | None = None,# NEW (0–1 expected)
         imd_decile: float | None = None,             # NEW
+        is_heatpump_candidate: int | None = None,    # NEW
+        heatpump_candidate_class: str | None = None, # NEW
         # ─── policy levers & context (optional) ────────────────────
         heating_controls: str | None = None,         # NEW
         meter_type: str | None = None,               # NEW
@@ -128,8 +130,47 @@ class HouseholdAgent(mg.GeoAgent):
         self.property_age  = (property_age or "").strip().lower() if property_age else None  # NEW
         self.main_fuel_type = (main_fuel_type or "").strip().lower() if main_fuel_type else None  # NEW
         self.main_heating_system = (main_heating_system or "").strip().lower() if main_heating_system else None  # NEW
+        self.is_heatpump_candidate = 1 if (is_heatpump_candidate or 0) else 0  # NEW
+        self.heatpump_candidate_class = (
+            (heatpump_candidate_class or "").strip().lower() if heatpump_candidate_class else None
+        )  # NEW
+        self.has_heatpump = "heat pump" in (self.main_heating_system or "").lower()
+        self.was_heatpump_initial = bool(self.has_heatpump)   # <-- NEW
         self.retrofit_envelope_score = None if retrofit_envelope_score is None else float(retrofit_envelope_score)  # NEW
         self.imd_decile = None if imd_decile is None else float(imd_decile)  # NEW
+        # -----------------------------------------------------------
+        # --- per-home climate sensitivity (heating slope) ---  # NEW
+        cfg = getattr(self.model, "config", None)
+        cfg_arche = cfg.archetypes if cfg else {}
+        heat_loss_default = {
+            "detached house": 1.30, "semi-detached house": 1.15,
+            "end-terraced house": 1.10, "mid-terraced house": 1.00,
+            "small block of flats/dwelling converted in to flats": 0.85,
+            "large block of flats": 0.75, "block of flats": 0.85,
+            "flat in mixed use building": 0.90,
+        }
+        ptype = (self.property_type or "").strip().lower()
+        sap   = float(self.sap_rating or 70.0)
+        retro = float(self.retrofit_envelope_score or 0.5)
+        fa    = float(self.floor_area_m2 or 90.0)
+
+        p_mult  = cfg_arche.get(ptype, {}).get("ua_mult") if ptype in cfg_arche else None
+        if p_mult is None:
+            p_mult = heat_loss_default.get(ptype, 1.0)
+        sap_mult   = 1.15 if sap < 55 else (0.90 if sap > 80 else 1.00)
+        retro_mult = 1.10 - 0.20 * max(0.0, min(1.0, retro))
+        area_mult  = max(0.7, min(1.6, fa / 90.0))
+        rng = __import__("random").Random(hash(str(self.unique_id)) & 0xFFFFFFFF)
+        noise_mult = max(0.75, min(1.25, rng.normalvariate(1.0, 0.10)))
+
+        self.heat_slope_kWh_per_deg = (
+            self.model.heating_slope_kWh_per_deg * p_mult * sap_mult * retro_mult * area_mult * noise_mult
+        )
+
+        # heat-pump effectiveness vs boiler (simple, deterministic)
+        self.hp_effect_mult = getattr(self.model, "boiler_efficiency", 0.90) / getattr(self.model, "heatpump_cop_ref", 2.8)
+        # -----------------------------------------------------------
+
 
         # NEW: policy levers (coerce to 0/1 where appropriate)
         def _b(v):  # NEW
@@ -160,45 +201,64 @@ class HouseholdAgent(mg.GeoAgent):
     # NEW: compute static hourly base from structure/levers (called once)
     def _compute_hourly_base_kwh(self) -> float:  # NEW
         base = float(getattr(self, "annual_energy_kwh", self.energy_demand))
-        # SAP adjustment
-        if self.sap_rating < 50:
-            base *= 1.20
-        elif self.sap_rating > 80:
-            base *= 0.80
-        # archetype
-        base *= PROPERTY_TYPE_MULTIPLIER.get(self.property_type, 1.0)
-        # floor area scaling
-        if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
-            scale = max(0.6, min(2.0, self.floor_area_m2 / 90.0))
-            base *= scale
-        # envelope quality (0–1 → up to -20%)
-        if self.retrofit_envelope_score is not None:
-            env_mult = 1.0 - 0.20 * max(0.0, min(1.0, self.retrofit_envelope_score))
-            base *= env_mult
-        # heating system / fuel nudges
-        fuel = (self.main_fuel_type or "")
-        heat = (self.main_heating_system or "")
-        if "electric" in fuel:
-            base *= 1.05
-        if "heat pump" in heat:
-            base *= 0.85
-        # policy levers (stackable)
-        lever_mult = 1.0
-        if self.cwi_flag:      lever_mult *= 0.92
-        if self.swi_flag:      lever_mult *= 0.90
-        if self.loft_ins_flag: lever_mult *= 0.95
-        if self.floor_ins_flag:lever_mult *= 0.96
-        if self.glazing_flag:  lever_mult *= 0.96
-        hc = (self.heating_controls or "")
-        if "programmer and thermostat" in hc:
-            lever_mult *= 0.97
-        elif "programmer only" in hc:
-            lever_mult *= 0.99
-        if (self.meter_type or "").startswith("smart"):
-            lever_mult *= 0.98
-        if self.is_off_gas:
-            lever_mult *= 1.05
-        base *= lever_mult
+        cfg = getattr(self.model, "config", None)
+        apply_mult = getattr(self.model, "apply_structural_multipliers", True)
+        if apply_mult:
+            # SAP adjustment
+            if self.sap_rating < 50:
+                base *= 1.20
+            elif self.sap_rating > 80:
+                base *= 0.80
+            # archetype
+            pt_mult_cfg = None
+            if cfg:
+                pt_mult_cfg = cfg.archetypes.get(self.property_type, {}).get("ua_mult")
+            base *= pt_mult_cfg if pt_mult_cfg is not None else PROPERTY_TYPE_MULTIPLIER.get(self.property_type, 1.0)
+            # floor area scaling
+            if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
+                scale = max(0.6, min(2.0, self.floor_area_m2 / 90.0))
+                base *= scale
+            # envelope quality (0–1 → up to -20%)
+            if self.retrofit_envelope_score is not None:
+                env_mult = 1.0 - 0.20 * max(0.0, min(1.0, self.retrofit_envelope_score))
+                base *= env_mult
+            # heating system / fuel nudges
+            fuel = (self.main_fuel_type or "")
+            heat = (self.main_heating_system or "")
+            systems_cfg = cfg.systems if cfg else {}
+            sys_mult = None
+            if "heat pump" in heat and "heat_pump" in systems_cfg:
+                sys_mult = systems_cfg.get("heat_pump", {}).get("level_mult")
+            elif "electric" in fuel and "electric_heating" in systems_cfg:
+                sys_mult = systems_cfg.get("electric_heating", {}).get("level_mult")
+            elif "gas" in fuel and "gas_boiler" in systems_cfg:
+                sys_mult = systems_cfg.get("gas_boiler", {}).get("level_mult")
+            if sys_mult is not None:
+                base *= sys_mult
+            else:
+                if "electric" in fuel:
+                    base *= 1.05
+                if "heat pump" in heat:
+                    base *= 0.85
+            # policy levers (stackable)
+            lever_mult = 1.0
+            env_cfg = cfg.envelope_levers if cfg else {}
+            if self.cwi_flag:      lever_mult *= env_cfg.get("cavity_wall", 0.92)
+            if self.swi_flag:      lever_mult *= env_cfg.get("solid_wall", 0.90)
+            if self.loft_ins_flag: lever_mult *= env_cfg.get("loft_insulation", 0.95)
+            if self.floor_ins_flag:lever_mult *= env_cfg.get("floor_insulation", 0.96)
+            if self.glazing_flag:  lever_mult *= env_cfg.get("glazing", 0.96)
+            hc = (self.heating_controls or "")
+            controls_cfg = cfg.controls if cfg else {}
+            if "programmer and thermostat" in hc:
+                lever_mult *= controls_cfg.get("programmer_and_thermostat", 0.97)
+            elif "programmer only" in hc:
+                lever_mult *= controls_cfg.get("programmer_only", 0.99)
+            if (self.meter_type or "").startswith("smart"):
+                lever_mult *= controls_cfg.get("smart_meter", controls_cfg.get("smart", 0.98))
+            if self.is_off_gas:
+                lever_mult *= 1.05
+            base *= lever_mult
         return base / 365 / 24
 
     def refresh_hourly_base(self) -> None:  # NEW: call if levers change mid-run
@@ -230,7 +290,7 @@ class HouseholdAgent(mg.GeoAgent):
         *,
         heating_setpoint: float,
         cooling_threshold: float,
-        heat_slope: float,
+        heat_slope: Optional[float],
         cool_slope: float,
         occupancy: Optional[int] = None,) -> None:
         self.ambient_tempC = float(tempC)
@@ -239,10 +299,13 @@ class HouseholdAgent(mg.GeoAgent):
             self.climate_cooling_kWh = 0.0
             return
 
-        hd = max(0.0, heating_setpoint - self.ambient_tempC)
-        cd = max(0.0, self.ambient_tempC - cooling_threshold)
+        db = 0.5  # NEW: thermostat deadband (°C)
+        hd = max(0.0, (heating_setpoint - self.ambient_tempC) - db)
+        cd = max(0.0, (self.ambient_tempC - cooling_threshold) - db)
 
-        heat = hd * float(heat_slope)
+        base_slope = float(heat_slope) if heat_slope is not None else float(self.heat_slope_kWh_per_deg)
+        eff_heat_slope = base_slope * (self.hp_effect_mult if self.has_heatpump else 1.0)
+        heat = hd * eff_heat_slope
         cool = cd * float(cool_slope)
 
         # Optional: dampen when nobody is home (simple heuristic)
