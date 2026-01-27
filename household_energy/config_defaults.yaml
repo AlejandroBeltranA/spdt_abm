@@ -12,6 +12,7 @@ model:
   cooling_slope_kWh_per_deg: 0.03
   energy_per_person_home: 0.06  # kWh/h additional when home
   energy_per_person_away: 0.01  # kWh/h standby when away
+  # level_scale: 1.0           # optional global multiplier for calibration (set in overrides)
   setpoint_setback_C: 2.0      # drop when away/asleep
   holiday_prob_daily: 0.002    # share of homes away per day (placeholder)
   boiler_efficiency: 0.90
@@ -111,6 +112,28 @@ schedules:
       leave: null
       return: null
   wfh_share: 0.20   # placeholder mix of profiles
+  # Optional: map incoming schedule_type strings to archetypes (leave/return hours)
+  type_map:
+    retired_household:      {leave: null, return: null}
+    unemployed_or_inactive: {leave: null, return: null}
+    working_adult_household:{leave: 9,    return: 17}
+    dual_earner_household:  {leave: 8,    return: 18}
+    family_with_children:   {leave: 9,    return: 15}   # school run
+    single_parent_with_children: {leave: 8, return: 15}
+    student_household:      {leave: 10,   return: 16}
+
+# Optional household-level settings (keep legacy behavior if absent)
+households:
+  hidp_csv: null          # path to hidp_uprn_matches_tiered.csv (optional)
+  merge_on: uprn_chr       # column in CSV to match GeoJSON UPRN
+  geojson_uprn_field: UPRN # fallbacks: UPRN, uprn, fid
+  resident_cap: 10         # max residents per household
+  bedroom_multiplier:      # applied if size_band is present (1–4 cap)
+    1: 0.75
+    2: 1.00
+    3: 1.15
+    4: 1.30
+  n_residents_default: 2   # legacy fallback when hh_n_people missing
 
 appliance_loads:
   base_kWh_per_day: 6.0

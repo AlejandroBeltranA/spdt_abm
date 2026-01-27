@@ -6,6 +6,8 @@ run.py – batch executor for the Household-Energy ABM
 Headless (non-GUI) entry point that:
 
 1) reads a GeoJSON of building polygons,
+   optionally left-joins a household enrichment CSV (HIDP, hh_n_people, tenure,
+   income_band, dwelling_bucket, schedule_type) on UPRN,
 2) instantiates `EnergyModel` with a climate parquet,
 3) runs either for a wall-clock window (UTC) or for `days × 24` hours,
 4) writes artefacts to `--outdir`:
@@ -66,12 +68,17 @@ import pandas as pd
 
 from household_energy.model import EnergyModel
 from household_energy.climate import ClimateField
+from household_energy.config import load_config
 
 
 # ────────────────────────── CLI parser ────────────────────────────
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run the ABM and export time-series.")
     p.add_argument("geojson", help="Path to neighbourhood GeoJSON")
+
+    # Optional household enrichment (HIDP + socio-demographics)
+    p.add_argument("--hidp-csv", default=None,
+                   help="Optional CSV with HIDP/household attributes (e.g., data/hidp_uprn_matches_tiered.csv)")
 
     # Climate/time window
     p.add_argument("--climate", required=True,
@@ -118,6 +125,50 @@ def main() -> None:
 
     # 1 ─ Load geometry and climate metadata
     gdf = gpd.read_file(args.geojson)
+
+    # Optional household enrichment CSV (HIDP + socio-demographics). No-op if not provided.
+    cfg_defaults = load_config(None)
+    hidp_path = args.hidp_csv or cfg_defaults.households.get("hidp_csv")
+    if hidp_path:
+        hidp_csv = Path(hidp_path)
+        if not hidp_csv.exists():
+            raise FileNotFoundError(f"HIDP CSV not found: {hidp_csv}")
+
+        hidp_df = pd.read_csv(hidp_csv, low_memory=False)
+        hidp_df.columns = [c.strip() for c in hidp_df.columns]
+
+        geo_uprn_field = cfg_defaults.households.get("geojson_uprn_field", "UPRN")
+        if geo_uprn_field not in gdf.columns:
+            for alt in ["UPRN", "uprn", "fid"]:
+                if alt in gdf.columns:
+                    geo_uprn_field = alt
+                    break
+        if geo_uprn_field not in gdf.columns:
+            raise KeyError(f"No UPRN-like field found in GeoJSON (looked for {geo_uprn_field}).")
+
+        merge_on_csv = cfg_defaults.households.get("merge_on", "uprn_chr")
+        # Ensure join keys are comparable (force to string)
+        gdf[geo_uprn_field] = gdf[geo_uprn_field].astype(str).str.strip()
+        hidp_df[merge_on_csv] = hidp_df[merge_on_csv].astype(str).str.strip()
+        hidp_df = hidp_df.drop_duplicates(subset=[merge_on_csv])
+        before = len(gdf)
+        gdf = gdf.merge(hidp_df, how="left", left_on=geo_uprn_field, right_on=merge_on_csv, suffixes=("_geo", "_hidp"))
+
+        # coalesce duplicate area/admin codes (e.g., lsoa_code_x/y, ward_code_x/y)
+        for base in ["lsoa_code", "ward_code", "local_authority"]:
+            cols = [c for c in gdf.columns if c.startswith(base)]
+            if len(cols) > 1:
+                keep = cols[0]
+                for c in cols[1:]:
+                    gdf[keep] = gdf[keep].combine_first(gdf[c])
+                for c in cols[1:]:
+                    gdf.drop(columns=c, inplace=True, errors="ignore")
+
+        unmatched = gdf[merge_on_csv].isna().sum() if merge_on_csv in gdf.columns else 0
+        if unmatched:
+            print(f"⚠️  {unmatched:,} households missing HIDP match (left join).")
+        print(f"✅ Enriched households: {before:,} → {len(gdf):,} rows (merge on {geo_uprn_field} ↔ {merge_on_csv})")
+
     cf = ClimateField(args.climate)
 
     # Determine time window (in hours) aligned to climate indices
