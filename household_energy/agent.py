@@ -87,6 +87,17 @@ class HouseholdAgent(mg.GeoAgent):
         imd_decile: float | None = None,             # NEW
         is_heatpump_candidate: int | None = None,    # NEW
         heatpump_candidate_class: str | None = None, # NEW
+        schedule_type: str | None = None,            # NEW
+        # NEW: socio‑demographic and dwelling attributes (optional)
+        hidp: str | None = None,                     # NEW
+        hh_n_people: int | None = None,              # NEW
+        hh_children: bool | None = None,             # NEW
+        hh_income: float | None = None,              # NEW
+        hh_income_band: str | None = None,           # NEW
+        hh_edu_detail: str | None = None,            # NEW
+        dwelling_bucket: str | None = None,          # NEW
+        tenure: str | None = None,                   # NEW
+        size_band: int | None = None,                # NEW (bedrooms, capped at 4)
         # ─── policy levers & context (optional) ────────────────────
         heating_controls: str | None = None,         # NEW
         meter_type: str | None = None,               # NEW
@@ -108,6 +119,41 @@ class HouseholdAgent(mg.GeoAgent):
         self.unique_id: str = unique_id
         self.property_type: str = property_type.strip().lower()
         self.sap_rating: float = sap_rating
+
+        # NEW: household identifiers / demographics
+        # Robust HIDP: allow NaN/float/None and fall back to unique_id
+        if isinstance(hidp, str) and hidp.strip():
+            self.hidp: Optional[str] = hidp.strip()
+        else:
+            try:
+                self.hidp = str(int(hidp)).strip()
+            except Exception:
+                self.hidp = str(unique_id)
+        try:
+            self.hh_n_people: Optional[int] = int(hh_n_people) if hh_n_people not in (None, "", float("nan")) else None       # NEW
+        except Exception:
+            self.hh_n_people = None
+        if hh_children in (None, ""):                                                                       # NEW
+            self.hh_children: Optional[bool] = None                                                         # NEW
+        else:                                                                                               # NEW
+            val = str(hh_children).strip().lower()                                                          # NEW
+            self.hh_children = val in ("true", "1", "yes", "y", "t")                                        # NEW
+        try:
+            self.hh_income: Optional[float] = float(hh_income) if hh_income not in (None, "") else None        # NEW
+        except Exception:
+            self.hh_income = None
+        self.hh_income_band: Optional[str] = (hh_income_band or None)                                        # NEW
+        self.hh_edu_detail: Optional[str] = (hh_edu_detail or None)                                          # NEW
+        self.dwelling_bucket: Optional[str] = (dwelling_bucket or None)                                      # NEW
+        self.tenure: Optional[str] = (tenure or None)                                                        # NEW
+        if isinstance(schedule_type, str) and schedule_type.strip():
+            self.schedule_type: Optional[str] = schedule_type.strip()
+        else:
+            self.schedule_type = None                                                                       # NEW
+        try:
+            self.size_band: Optional[int] = int(size_band) if size_band not in (None, "") else None         # NEW
+        except Exception:
+            self.size_band = None
 
         # NEW: prefer calibrated annual kWh; keep legacy alias for compatibility
         self.annual_energy_kwh: float = float(annual_energy_kwh)  # NEW
@@ -218,6 +264,15 @@ class HouseholdAgent(mg.GeoAgent):
             if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
                 scale = max(0.6, min(2.0, self.floor_area_m2 / 90.0))
                 base *= scale
+            # bedrooms (size_band) scaling – lightweight proxy when floor area absent
+            if self.size_band is not None:
+                try:
+                    sb = int(self.size_band)
+                except Exception:
+                    sb = None
+                if sb is not None and cfg:
+                    bm = cfg.households.get("bedroom_multiplier", {})
+                    base *= float(bm.get(sb, 1.0))
             # envelope quality (0–1 → up to -20%)
             if self.retrofit_envelope_score is not None:
                 env_mult = 1.0 - 0.20 * max(0.0, min(1.0, self.retrofit_envelope_score))

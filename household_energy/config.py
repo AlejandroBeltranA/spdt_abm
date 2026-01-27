@@ -68,6 +68,11 @@ class ModelConfig:
     def meters(self) -> Dict[str, Any]:
         return self.raw.get("meters", {})
 
+    @property
+    def households(self) -> Dict[str, Any]:
+        """Household-level options (optional hidp CSV, bedroom multipliers, etc.)."""
+        return self.raw.get("households", {})
+
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as fh:
