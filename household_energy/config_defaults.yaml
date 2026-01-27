@@ -114,13 +114,13 @@ schedules:
   wfh_share: 0.20   # placeholder mix of profiles
   # Optional: map incoming schedule_type strings to archetypes (leave/return hours)
   type_map:
-    retired_household:      {leave: null, return: null}
-    unemployed_or_inactive: {leave: null, return: null}
-    working_adult_household:{leave: 9,    return: 17}
-    dual_earner_household:  {leave: 8,    return: 18}
-    family_with_children:   {leave: 9,    return: 15}   # school run
+    retired_household:        {leave: null, return: null}
+    unemployed_or_inactive:   {leave: null, return: null}
+    working_adult_household:  {leave: 9,    return: 17}
+    dual_earner_household:    {leave: 8,    return: 18}
+    family_with_children:     {leave: 9,    return: 15}   # school run
     single_parent_with_children: {leave: 8, return: 15}
-    student_household:      {leave: 10,   return: 16}
+    student_household:        {leave: 10,   return: 16}
 
 # Optional household-level settings (keep legacy behavior if absent)
 households:
