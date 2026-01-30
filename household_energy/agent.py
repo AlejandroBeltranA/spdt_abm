@@ -37,20 +37,35 @@ from shapely.geometry.base import BaseGeometry
 
 # ────────────────────────────────────────────────────────────────────
 #  Energy scaling by property archetype
+#  Baseline vs heating multipliers are decoupled to avoid double-counting structure.
 # ────────────────────────────────────────────────────────────────────
 
-PROPERTY_TYPE_MULTIPLIER: Dict[str, float] = {
+PROPERTY_TYPE_MULT_BASE: Dict[str, float] = {
     "mid-terraced house": 1.00,
-    "semi-detached house": 1.25,
-    "small block of flats/dwelling converted in to flats": 0.80,
-    "large block of flats": 0.70,
-    "block of flats": 0.70,
-    "end-terraced house": 1.05,
-    "detached house": 1.80,
-    "flat in mixed use building": 0.85,
+    "semi-detached house": 1.00,
+    "small block of flats/dwelling converted in to flats": 1.00,
+    "large block of flats": 1.00,
+    "block of flats": 1.00,
+    "end-terraced house": 1.00,
+    "detached house": 1.00,
+    "flat in mixed use building": 1.00,
 }
 
-PROPERTY_TYPES: List[str] = list(PROPERTY_TYPE_MULTIPLIER.keys())
+PROPERTY_TYPE_MULT_HEAT: Dict[str, float] = {
+    "mid-terraced house": 1.00,
+    "semi-detached house": 1.10,
+    "small block of flats/dwelling converted in to flats": 0.90,
+    "large block of flats": 0.85,
+    "block of flats": 0.85,
+    "end-terraced house": 1.05,
+    "detached house": 1.20,
+    "flat in mixed use building": 0.90,
+}
+
+# Backwards-compatible alias (used elsewhere); treat as the heating map.
+PROPERTY_TYPE_MULTIPLIER: Dict[str, float] = PROPERTY_TYPE_MULT_HEAT
+
+PROPERTY_TYPES: List[str] = list(PROPERTY_TYPE_MULT_BASE.keys())
 
 # ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +100,19 @@ class HouseholdAgent(mg.GeoAgent):
         main_heating_system: str | None = None,      # NEW
         retrofit_envelope_score: float | None = None,# NEW (0–1 expected)
         imd_decile: float | None = None,             # NEW
+        is_heatpump_candidate: int | None = None,    # NEW
+        heatpump_candidate_class: str | None = None, # NEW
+        schedule_type: str | None = None,            # NEW
+        # NEW: socio‑demographic and dwelling attributes (optional)
+        hidp: str | None = None,                     # NEW
+        hh_n_people: int | None = None,              # NEW
+        hh_children: bool | None = None,             # NEW
+        hh_income: float | None = None,              # NEW
+        hh_income_band: str | None = None,           # NEW
+        hh_edu_detail: str | None = None,            # NEW
+        dwelling_bucket: str | None = None,          # NEW
+        tenure: str | None = None,                   # NEW
+        size_band: int | None = None,                # NEW (bedrooms, capped at 4)
         # ─── policy levers & context (optional) ────────────────────
         heating_controls: str | None = None,         # NEW
         meter_type: str | None = None,               # NEW
@@ -106,6 +134,43 @@ class HouseholdAgent(mg.GeoAgent):
         self.unique_id: str = unique_id
         self.property_type: str = property_type.strip().lower()
         self.sap_rating: float = sap_rating
+        # track whether this dwelling came with a calibrated annual value
+        self.has_calibrated_energy: bool = bool(getattr(self, "annual_energy_kwh", None))  # may be overridden in model.py
+
+        # NEW: household identifiers / demographics
+        # Robust HIDP: allow NaN/float/None and fall back to unique_id
+        if isinstance(hidp, str) and hidp.strip():
+            self.hidp: Optional[str] = hidp.strip()
+        else:
+            try:
+                self.hidp = str(int(hidp)).strip()
+            except Exception:
+                self.hidp = str(unique_id)
+        try:
+            self.hh_n_people: Optional[int] = int(hh_n_people) if hh_n_people not in (None, "", float("nan")) else None       # NEW
+        except Exception:
+            self.hh_n_people = None
+        if hh_children in (None, ""):                                                                       # NEW
+            self.hh_children: Optional[bool] = None                                                         # NEW
+        else:                                                                                               # NEW
+            val = str(hh_children).strip().lower()                                                          # NEW
+            self.hh_children = val in ("true", "1", "yes", "y", "t")                                        # NEW
+        try:
+            self.hh_income: Optional[float] = float(hh_income) if hh_income not in (None, "") else None        # NEW
+        except Exception:
+            self.hh_income = None
+        self.hh_income_band: Optional[str] = (hh_income_band or None)                                        # NEW
+        self.hh_edu_detail: Optional[str] = (hh_edu_detail or None)                                          # NEW
+        self.dwelling_bucket: Optional[str] = (dwelling_bucket or None)                                      # NEW
+        self.tenure: Optional[str] = (tenure or None)                                                        # NEW
+        if isinstance(schedule_type, str) and schedule_type.strip():
+            self.schedule_type: Optional[str] = schedule_type.strip()
+        else:
+            self.schedule_type = None                                                                       # NEW
+        try:
+            self.size_band: Optional[int] = int(size_band) if size_band not in (None, "") else None         # NEW
+        except Exception:
+            self.size_band = None
 
         # NEW: prefer calibrated annual kWh; keep legacy alias for compatibility
         self.annual_energy_kwh: float = float(annual_energy_kwh)  # NEW
@@ -128,8 +193,47 @@ class HouseholdAgent(mg.GeoAgent):
         self.property_age  = (property_age or "").strip().lower() if property_age else None  # NEW
         self.main_fuel_type = (main_fuel_type or "").strip().lower() if main_fuel_type else None  # NEW
         self.main_heating_system = (main_heating_system or "").strip().lower() if main_heating_system else None  # NEW
+        self.is_heatpump_candidate = 1 if (is_heatpump_candidate or 0) else 0  # NEW
+        self.heatpump_candidate_class = (
+            (heatpump_candidate_class or "").strip().lower() if heatpump_candidate_class else None
+        )  # NEW
+        self.has_heatpump = "heat pump" in (self.main_heating_system or "").lower()
+        self.was_heatpump_initial = bool(self.has_heatpump)   # <-- NEW
         self.retrofit_envelope_score = None if retrofit_envelope_score is None else float(retrofit_envelope_score)  # NEW
         self.imd_decile = None if imd_decile is None else float(imd_decile)  # NEW
+        # -----------------------------------------------------------
+        # --- per-home climate sensitivity (heating slope) ---  # NEW
+        cfg = getattr(self.model, "config", None)
+        cfg_arche = cfg.archetypes if cfg else {}
+        heat_loss_default = {
+            "detached house": 1.30, "semi-detached house": 1.15,
+            "end-terraced house": 1.10, "mid-terraced house": 1.00,
+            "small block of flats/dwelling converted in to flats": 0.85,
+            "large block of flats": 0.75, "block of flats": 0.85,
+            "flat in mixed use building": 0.90,
+        }
+        ptype = (self.property_type or "").strip().lower()
+        sap   = float(self.sap_rating or 70.0)
+        retro = float(self.retrofit_envelope_score or 0.5)
+        fa    = float(self.floor_area_m2 or 90.0)
+
+        p_mult  = cfg_arche.get(ptype, {}).get("ua_mult") if ptype in cfg_arche else None
+        if p_mult is None:
+            p_mult = heat_loss_default.get(ptype, 1.0)
+        sap_mult   = 1.15 if sap < 55 else (0.90 if sap > 80 else 1.00)
+        retro_mult = 1.10 - 0.20 * max(0.0, min(1.0, retro))
+        area_mult  = max(0.7, min(1.6, fa / 90.0))
+        rng = __import__("random").Random(hash(str(self.unique_id)) & 0xFFFFFFFF)
+        noise_mult = max(0.75, min(1.25, rng.normalvariate(1.0, 0.10)))
+
+        self.heat_slope_kWh_per_deg = (
+            self.model.heating_slope_kWh_per_deg * p_mult * sap_mult * retro_mult * area_mult * noise_mult
+        )
+
+        # heat-pump effectiveness vs boiler (simple, deterministic)
+        self.hp_effect_mult = getattr(self.model, "boiler_efficiency", 0.90) / getattr(self.model, "heatpump_cop_ref", 2.8)
+        # -----------------------------------------------------------
+
 
         # NEW: policy levers (coerce to 0/1 where appropriate)
         def _b(v):  # NEW
@@ -156,53 +260,137 @@ class HouseholdAgent(mg.GeoAgent):
 
         # NEW: precompute hourly base once (big speed win)
         self._hourly_base_kwh: float = self._compute_hourly_base_kwh()  # NEW
+        # NEW: per-household heat slope (kWh per degC-hour) for climate response
+        self.heat_slope_kWh_per_deg: float = self._compute_heat_slope(getattr(model, "heating_slope_kWh_per_deg", 0.05))
+        # NEW: per-household heating capacity (kWh/h) for duty-cycle model
+        self.heat_capacity_kWh_per_hour: float = self._compute_heat_capacity()
 
     # NEW: compute static hourly base from structure/levers (called once)
     def _compute_hourly_base_kwh(self) -> float:  # NEW
-        base = float(getattr(self, "annual_energy_kwh", self.energy_demand))
-        # SAP adjustment
+        """Non-climate baseline (small, meter-anchored, year-round).
+
+        Intent:
+        - Do NOT rescale baseline by EPC/SAP/envelope/fuel.
+        - Keep a modest fixed load that remains in summer.
+        - Property features shape heating only (handled elsewhere).
+        """
+        cfg = getattr(self.model, "config", None)
+        level_scale = getattr(self.model, "level_scale", 1.0)
+        # Baseline anchored on meter data, not EPC annual
+        base = float(getattr(self.model, "baseline_anchor_kwh_per_hour", 0.4))
+
+        # property-type multiplier (baseline map from config if present)
+        pt_mult = PROPERTY_TYPE_MULT_BASE.get(self.property_type, 1.0)
+        if cfg and isinstance(cfg.model, dict):
+            pt_mult = cfg.model.get("property_type_mult_base", {}).get(self.property_type, pt_mult)
+        base *= pt_mult
+
+        # floor area weak sublinear scaling
+        fa = self.floor_area_m2
+        if fa is not None and fa > 0:
+            ref = float(getattr(self.model, "baseline_area_ref_m2", 70.0))
+            exp = float(getattr(self.model, "baseline_area_exp", 0.20))
+            lo, hi = getattr(self.model, "baseline_area_clip", (0.85, 1.25))
+            area_mult = max(lo, min(hi, (fa / ref) ** exp))
+            base *= area_mult
+
+        hourly = base * level_scale
+        # cap baseline to avoid unrealistic power draw
+        max_base = getattr(self.model, "max_base_kwh_per_hour", None)
+        if max_base is not None:
+            hourly = min(hourly, float(max_base))
+        return hourly
+
+    def _compute_heat_slope(self, base_slope: float) -> float:
+        """Per-household temperature sensitivity (heating slope). Structure affects slope, not annual anchor."""
+        slope = float(base_slope)
+        cfg = getattr(self.model, "config", None)
+
+        # SAP: gentle modulation
         if self.sap_rating < 50:
-            base *= 1.20
+            slope *= 1.10
         elif self.sap_rating > 80:
-            base *= 0.80
-        # archetype
-        base *= PROPERTY_TYPE_MULTIPLIER.get(self.property_type, 1.0)
-        # floor area scaling
+            slope *= 0.90
+
+        # Property type multiplier (bounded, from config if present)
+        pt_mult = PROPERTY_TYPE_MULT_HEAT.get(self.property_type, 1.0)
+        if cfg and isinstance(cfg.model, dict):
+            pt_mult = cfg.model.get("pt_heat_mult", {}).get(self.property_type, cfg.model.get("pt_heat_mult", {}).get("default", pt_mult))
+        slope *= pt_mult
+
+        # Floor area sublinear scaling
+        area_exp = getattr(self.model, "heat_slope_area_exp", 0.6)
         if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
-            scale = max(0.6, min(2.0, self.floor_area_m2 / 90.0))
-            base *= scale
-        # envelope quality (0–1 → up to -20%)
+            slope *= max(0.7, min(1.6, (self.floor_area_m2 / 90.0) ** area_exp))
+        elif self.size_band is not None and (self.floor_area_m2 is None or self.floor_area_m2 <= 0):
+            try:
+                sb = int(self.size_band)
+                if cfg:
+                    slope *= float(cfg.households.get("bedroom_multiplier", {}).get(sb, 1.0))
+            except Exception:
+                pass
+
+        # Envelope quality: better envelope lowers slope (up to 20%)
         if self.retrofit_envelope_score is not None:
             env_mult = 1.0 - 0.20 * max(0.0, min(1.0, self.retrofit_envelope_score))
-            base *= env_mult
-        # heating system / fuel nudges
+            slope *= env_mult
+
+        # Heating system nudges
         fuel = (self.main_fuel_type or "")
         heat = (self.main_heating_system or "")
-        if "electric" in fuel:
-            base *= 1.05
+        systems_cfg = cfg.systems if cfg else {}
+        sys_mult = None
+        if "heat pump" in heat and "heat_pump" in systems_cfg:
+            sys_mult = systems_cfg.get("heat_pump", {}).get("heating_slope_mult", 0.70)
+        elif "electric" in fuel and "electric_heating" in systems_cfg:
+            sys_mult = systems_cfg.get("electric_heating", {}).get("heating_slope_mult", 1.00)
+        elif "gas" in fuel and "gas_boiler" in systems_cfg:
+            sys_mult = systems_cfg.get("gas_boiler", {}).get("heating_slope_mult", 1.00)
+        if sys_mult is not None:
+            slope *= sys_mult
+
+        # Clamp
+        s_min = getattr(self.model, "heat_slope_min", 0.0)
+        s_max = getattr(self.model, "heat_slope_max", 0.10)
+        return max(s_min, min(s_max, slope))
+
+    def _compute_heat_capacity(self) -> float:
+        """Compute per-dwelling heating capacity (kWh/h), sublinear in area, bounded."""
+        cfg = getattr(self.model, "config", None)
+        base_cap = float(getattr(self.model, "base_heat_capacity", 8.0))
+        cap = base_cap
+
+        # property type multiplier (reuse pt_heat_mult where available)
+        if cfg and isinstance(cfg.model, dict):
+            cap *= cfg.model.get("pt_heat_mult", {}).get(self.property_type, cfg.model.get("pt_heat_mult", {}).get("default", 1.0))
+        else:
+            cap *= PROPERTY_TYPE_MULT_HEAT.get(self.property_type, 1.0)
+
+        # floor area scaling (sublinear)
+        area_exp = getattr(self.model, "heat_capacity_area_exp", 0.5)
+        if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
+            cap *= max(0.7, min(1.6, (self.floor_area_m2 / 90.0) ** area_exp))
+
+        # system type nudges
+        heat = (self.main_heating_system or "").lower()
+        fuel = (self.main_fuel_type or "").lower()
         if "heat pump" in heat:
-            base *= 0.85
-        # policy levers (stackable)
-        lever_mult = 1.0
-        if self.cwi_flag:      lever_mult *= 0.92
-        if self.swi_flag:      lever_mult *= 0.90
-        if self.loft_ins_flag: lever_mult *= 0.95
-        if self.floor_ins_flag:lever_mult *= 0.96
-        if self.glazing_flag:  lever_mult *= 0.96
-        hc = (self.heating_controls or "")
-        if "programmer and thermostat" in hc:
-            lever_mult *= 0.97
-        elif "programmer only" in hc:
-            lever_mult *= 0.99
-        if (self.meter_type or "").startswith("smart"):
-            lever_mult *= 0.98
-        if self.is_off_gas:
-            lever_mult *= 1.05
-        base *= lever_mult
-        return base / 365 / 24
+            cap *= 0.9
+        elif "electric" in fuel:
+            cap *= 0.9
+        elif "oil" in fuel:
+            cap *= 1.0
+        elif "solid" in fuel:
+            cap *= 1.1
+
+        # bounds
+        min_cap = float(getattr(self.model, "min_heat_capacity", 4.0))
+        max_cap = float(getattr(self.model, "max_heat_kwh_per_hour", 20.0))
+        return max(min_cap, min(max_cap, cap))
 
     def refresh_hourly_base(self) -> None:  # NEW: call if levers change mid-run
         self._hourly_base_kwh = self._compute_hourly_base_kwh()  # NEW
+        self.heat_capacity_kWh_per_hour = self._compute_heat_capacity()
 
     # ------------------------------------------------------------------
     #  Convenience helpers used by the model each tick
@@ -212,6 +400,13 @@ class HouseholdAgent(mg.GeoAgent):
         self.energy_consumption = 0.0
         self.climate_heating_kWh = 0.0
         self.climate_cooling_kWh = 0.0
+        self.base_kwh = 0.0
+        self.heat_kwh = 0.0
+        self.spike_kwh = 0.0
+        self.cap_clip_total = 0.0
+        self.cap_clip_base = 0.0
+        self.cap_clip_heat = 0.0
+        self.cap_clip_spike = 0.0
 
     def calc_base_energy(self) -> float:
         # NEW: return cached hourly base (computed once)
@@ -230,26 +425,47 @@ class HouseholdAgent(mg.GeoAgent):
         *,
         heating_setpoint: float,
         cooling_threshold: float,
-        heat_slope: float,
+        heat_slope: Optional[float],
         cool_slope: float,
         occupancy: Optional[int] = None,) -> None:
         self.ambient_tempC = float(tempC)
         if not math.isfinite(self.ambient_tempC):
             self.climate_heating_kWh = 0.0
             self.climate_cooling_kWh = 0.0
+            self.heat_kwh = 0.0
             return
 
-        hd = max(0.0, heating_setpoint - self.ambient_tempC)
-        cd = max(0.0, self.ambient_tempC - cooling_threshold)
+        db = 0.5  # NEW: thermostat deadband (°C)
+        hd = max(0.0, (heating_setpoint - self.ambient_tempC) - db)
+        cd = max(0.0, (self.ambient_tempC - cooling_threshold) - db)
 
-        heat = hd * float(heat_slope)
+        # Demand severity (dimensionless) based on slope and temperature gap
+        base_slope = float(heat_slope) if heat_slope is not None else float(self.heat_slope_kWh_per_deg)
+        eff_heat_slope = base_slope * (self.hp_effect_mult if self.has_heatpump else 1.0)
+        loss_index = hd * eff_heat_slope
+
+        # Duty cycle (0-1), soft saturation
+        K = float(getattr(self.model, "loss_to_duty_k", 3.0))
+        duty = loss_index / (loss_index + K) if loss_index > 0 else 0.0
+        duty = max(0.0, min(1.0, duty))
+
+        # Capacity-based heating (kWh/h)
+        heat_capacity = self.heat_capacity_kWh_per_hour
+        heat = duty * heat_capacity
+
         cool = cd * float(cool_slope)
+
+        # Hard cap as safety net
+        max_heat = getattr(self.model, "max_heat_kwh_per_hour", None)
+        if max_heat is not None:
+            heat = min(heat, float(max_heat))
 
         # Optional: dampen when nobody is home (simple heuristic)
         if occupancy is not None and occupancy <= 0:
             heat *= 0.5
             cool *= 0.5
 
+        self.heat_kwh = heat
         self.climate_heating_kWh = heat
         self.climate_cooling_kWh = cool
         self.energy_consumption += heat + cool
@@ -316,9 +532,11 @@ class PersonAgent(mesa.Agent):
             base_spike *= 0.8
 
         if self.at_home:
+            self.home.spike_kwh += base_spike
             self.home.energy_consumption += base_spike
             self.energy = base_spike
         else:
             standby = self.model.energy_per_person_away
+            self.home.spike_kwh += standby
             self.home.energy_consumption += standby
             self.energy = standby

@@ -29,3 +29,4 @@ include = ["household_energy*"]
 energy-run = "household_energy.run:main"
 energy-analyze = "household_energy.analyze:main"
 energy-server = "household_energy.server:main"
+energy-run-lsoa = "household_energy.run_lsoa_batch:main"

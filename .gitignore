@@ -287,3 +287,4 @@ dist/
 *.png
 *.html
 *.sh
+/.github
