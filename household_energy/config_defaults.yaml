@@ -1,10 +1,37 @@
 meta:
   name: default
-  date: 2024-08-01
+  date: 2026-01-27
   notes: Baseline placeholders
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HOW TO USE THIS CONFIG
+#  - This file provides defaults. Prefer creating a small override YAML
+#    (e.g., my_scenario.yaml) and only set the keys you want to change.
+#    Overrides deep-merge on top of these defaults.
+#  - Common override knobs (and what they do):
+#      model:
+#        heating_setpoint_C / cooling_threshold_C  → comfort / heat-load shifts
+#        heating_slope_kWh_per_deg / cooling_slope_kWh_per_deg → climate sensitivity
+#        energy_per_person_home / away → occupant spikes baseline
+#        heatpump_adoption_rate / heatpump_class_weight → HP uptake & targeting
+#        level_scale → global calibration multiplier
+#      schedules:
+#        default_profiles (leave/return hours), wfh_share, type_map (map schedule_type → hours)
+#      households:
+#        hidp_csv path/join keys (UPRN merge), resident_cap, bedroom_multiplier,
+#        n_residents_default (fallback occupancy when hh_n_people missing)
+#      envelope_levers / systems:
+#        multipliers for CWI/SWI/loft/floor/glazing; system level/heating slope tweaks
+#  - New keys in overrides are kept in ModelConfig.raw; only referenced keys affect behavior.
+#  - Keep overrides minimal and dated in meta for traceability.
+# ─────────────────────────────────────────────────────────────────────────────
 
 model:
   # Scenario-level toggles and defaults
+  # NOTE: Baseline (non-climate) now uses a fixed meter-anchored load.
+  #       Structural multipliers (SAP, envelope, system) no longer alter baseline;
+  #       they only shape heating via slopes/capacity.
+  #       Baseline uses property_type_mult_base; heating uses pt_heat_mult.
   local_tz: Europe/London
   heating_setpoint_C: 18.5      # occupied setpoint (can be archetype-adjusted)
   cooling_threshold_C: 24.0
@@ -12,7 +39,40 @@ model:
   cooling_slope_kWh_per_deg: 0.03
   energy_per_person_home: 0.06  # kWh/h additional when home
   energy_per_person_away: 0.01  # kWh/h standby when away
-  # level_scale: 1.0           # optional global multiplier for calibration (set in overrides)
+  level_scale: 1.0           # global multiplier for baseline level (use overrides to tune)
+  # Baseline (non-climate) anchor: use meter-based constant, not EPC annual
+  use_epc_for_baseline: false
+  baseline_anchor_kwh_per_hour: 0.40
+  baseline_area_ref_m2: 70.0
+  baseline_area_exp: 0.20
+  baseline_area_clip: [0.85, 1.25]
+  property_type_mult_base:
+    mid-terraced house: 1.00
+    end-terraced house: 1.05
+    semi-detached house: 1.10
+    detached house: 1.20
+    small block of flats/dwelling converted in to flats: 0.90
+    block of flats: 0.85
+    large block of flats: 0.85
+    flat in mixed use building: 0.90
+  # Heat slope shaping (bounded, sublinear)
+  heat_slope_area_exp: 0.6
+  heat_slope_min: 0.0
+  heat_slope_max: 0.10      # kWh per degC-hour cap
+  max_heat_kwh_per_hour: 20.0  # absolute hourly heating cap
+  max_total_kwh_per_hour: 20.0  # absolute per-dwelling hourly cap (baseline + heating + spikes)
+  max_base_kwh_per_hour: 1.5    # cap on baseline (non-climate) hourly load
+  # Duty-cycle heating model
+  loss_to_duty_k: 3.0           # larger -> slower ramp to full duty
+  base_heat_capacity: 8.0       # kWh/h nominal capacity
+  heat_capacity_area_exp: 0.5   # sublinear scaling with area for capacity
+  min_heat_capacity: 4.0        # kWh/h floor
+  pt_heat_mult:
+    detached: 1.40
+    semi-detached: 1.20
+    terraced: 1.00
+    flat: 0.80
+    default: 1.00
   setpoint_setback_C: 2.0      # drop when away/asleep
   holiday_prob_daily: 0.002    # share of homes away per day (placeholder)
   boiler_efficiency: 0.90
@@ -26,8 +86,8 @@ model:
   apply_structural_multipliers: true   # if false, use calibrated annual as-is
 
 archetypes:
-  # Keyed by property_type (lowercase); age bands and envelope placeholders.
-  # Values are multipliers or deltas applied in the model (keep 1.0 = neutral until populated).
+  # Property-type multipliers (UA/area/air-tightness/thermal mass). 1.0 = neutral.
+  # Tune UA up for leakier stock, down for tighter; adjust area caps for size effects.
   detached:
     ua_mult: 1.15          # heat-loss multiplier vs base
     area_mult_cap: [0.7, 1.6]
@@ -55,6 +115,7 @@ archetypes:
     thermal_mass_class: light
 
 age_bands:
+  # Optional age-layer multipliers applied on top of archetypes.
   pre-1919:
     ua_mult: 1.10
     infiltration_mult: 1.10
@@ -66,7 +127,7 @@ age_bands:
     infiltration_mult: 0.90
 
 controls:
-  # Effectiveness multipliers (run-time placeholder values)
+  # Control-tech multipliers (lower = savings). Replace with field evidence if available.
   programmer_and_thermostat: 0.97
   programmer_only: 0.99
   smart_meter: 0.98
@@ -75,6 +136,7 @@ controls:
   smart: 0.98
 
 envelope_levers:
+  # Stackable retrofit multipliers applied when *_flag == 1
   cavity_wall: 0.92
   solid_wall: 0.90
   loft_insulation: 0.95
@@ -83,6 +145,7 @@ envelope_levers:
   airtightness_improvement: 0.95
 
 systems:
+  # Heating system level/slope multipliers; refine with measured performance if available.
   electric_heating:
     level_mult: 1.05
     heating_slope_mult: 1.00
@@ -136,12 +199,14 @@ households:
   n_residents_default: 2   # legacy fallback when hh_n_people missing
 
 appliance_loads:
+  # Non-HVAC loads (kWh/day). Adjust from survey / smart meter baselines.
   base_kWh_per_day: 6.0
   spike_kWh: 0.2
   spike_per_person_per_day: 6
   lighting_kWh_per_day: 2.0
 
 occupancy:
+  # Average occupancy hints (used in notebooks/utilities; model uses hh_n_people when present).
   avg_persons: 2.3
   persons_by_property_type:
     flat: 1.8
@@ -150,7 +215,44 @@ occupancy:
     detached: 2.9
 
 meters:
-  dual_rate_share: 0.0   # placeholder; set if Economy-7 style meters present
+  # Shares of special meters (for tariff/billing analysis).
+  dual_rate_share: 0.0   # set if Economy-7 style meters present
   heat_meter_share: 0.0
 
+# policies:
+#   # Template: declare cohorts + actions applied to the GeoDataFrame before building the model.
+#   # Copy this block into an override YAML and edit; left commented here for reference.
+#   hp_low_income_medium_edu:
+#     eligibility:
+#       hh_income_band: [q1_lowest, q2_low]
+#       hh_edu_detail: [education_other, upper_further]
+#     actions:
+#       is_heatpump_candidate: 1
+#       heatpump_candidate_class: priority
+#     adoption:
+#       heatpump_adoption_rate: 1.0   # optional policy-specific override
+#
+#   kids_envelope:
+#     eligibility:
+#       schedule_type: [family_with_children, single_parent_with_children]
+#     actions:
+#       loft_ins_flag: 1
+#       glazing_flag: 1
+#
+#   elderly_smart_setback:
+#     eligibility:
+#       schedule_type: [retired_household]
+#     actions:
+#       meter_type: smart
+#     model_overrides:
+#       heating_setpoint_C_delta: -1.0   # apply a -1°C setback (interpretation handled by caller)
+#
+#   hp_social_rent:
+#     eligibility:
+#       tenure: [social_rent]
+#     actions:
+#       is_heatpump_candidate: 1
+#       heatpump_candidate_class: priority
+#     adoption:
+#       heatpump_adoption_rate: 1.0
 # Note: values above are placeholders. Replace with SAP/EDRP/SMETER-derived parameters.
