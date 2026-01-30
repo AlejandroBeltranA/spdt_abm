@@ -106,6 +106,26 @@ class EnergyModel(mesa.Model):
         self.heating_slope_kWh_per_deg: float = float(self.config.model.get("heating_slope_kWh_per_deg", 0.05))
         self.cooling_slope_kWh_per_deg: float = float(self.config.model.get("cooling_slope_kWh_per_deg", 0.03))
         self.apply_structural_multipliers: bool = bool(self.config.model.get("apply_structural_multipliers", True))
+        # heat-slope shaping / caps
+        self.heat_slope_area_exp: float = float(self.config.model.get("heat_slope_area_exp", 0.6))
+        self.heat_slope_min: float = float(self.config.model.get("heat_slope_min", 0.0))
+        self.heat_slope_max: float = float(self.config.model.get("heat_slope_max", 0.10))
+        self.max_heat_kwh_per_hour: float = float(self.config.model.get("max_heat_kwh_per_hour", 20.0))
+        self.max_total_kwh_per_hour: float = float(self.config.model.get("max_total_kwh_per_hour", 20.0))
+        self.max_base_kwh_per_hour: float = float(self.config.model.get("max_base_kwh_per_hour", 1.5))
+        self.loss_to_duty_k: float = float(self.config.model.get("loss_to_duty_k", 3.0))
+        self.base_heat_capacity: float = float(self.config.model.get("base_heat_capacity", 8.0))
+        self.heat_capacity_area_exp: float = float(self.config.model.get("heat_capacity_area_exp", 0.5))
+        self.min_heat_capacity: float = float(self.config.model.get("min_heat_capacity", 4.0))
+        # Baseline anchor params
+        # Baseline is now a small meter-derived constant; structural multipliers are
+        # applied to heating only (see _compute_hourly_base_kwh in agent.py).
+        self.use_epc_for_baseline: bool = bool(self.config.model.get("use_epc_for_baseline", False))
+        self.baseline_anchor_kwh_per_hour: float = float(self.config.model.get("baseline_anchor_kwh_per_hour", 0.4))
+        self.baseline_area_ref_m2: float = float(self.config.model.get("baseline_area_ref_m2", 70.0))
+        self.baseline_area_exp: float = float(self.config.model.get("baseline_area_exp", 0.20))
+        self.baseline_area_clip = tuple(self.config.model.get("baseline_area_clip", (0.85, 1.25)))
+        self.property_type_mult_base: Dict[str, float] = self.config.model.get("property_type_mult_base", {})
 
         # --------------- NEW: heat pump params --------------------
         self.boiler_efficiency = 0.90       # for hp effectiveness (boiler η)
@@ -150,6 +170,10 @@ class EnergyModel(mesa.Model):
             n_residents_func = _default_residents
 
         for _, row in gdf.iterrows():
+            has_calibrated_energy = any(
+                pd.notna(row.get(k))
+                for k in ("energy_cal_kwh", "energy_demand_kwh", "energy_demand")
+            )
             house = HouseholdAgent(
                 unique_id=str(row.get("UPRN", row.get("uprn", row.get("fid")))),  # NEW: UPRN-friendly
                 model=self,
@@ -198,6 +222,9 @@ class EnergyModel(mesa.Model):
                 schedule_type=row.get("schedule_type"),
                 crs=gdf.crs,
             )
+            house.has_calibrated_energy = has_calibrated_energy
+            # recompute heat slope in case config differs from default
+            house.heat_slope_kWh_per_deg = house._compute_heat_slope(self.heating_slope_kWh_per_deg)
             self.household_agents.append(house)
             self.space.add_agents([house])
 
@@ -366,14 +393,22 @@ class EnergyModel(mesa.Model):
         make_type_getter = lambda p: (lambda m: m.energy_by_type.get(p, 0))
         make_wealth_getter = lambda grp: (lambda m: m.energy_by_wealth.get(grp, 0))
 
+        def _mean_ambient_temp(m) -> float:
+            vals = [getattr(h, "ambient_tempC", np.nan) for h in m.household_agents]
+            if not vals:
+                return float("nan")
+            arr = np.array(vals, dtype=float)
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                return float("nan")
+            return float(np.nanmean(arr))
+
         model_reporters = {
             **{t: make_type_getter(t) for t in PROPERTY_TYPES},
             **{w: make_wealth_getter(w) for w in ["high", "medium", "low"]},
             "total_energy": lambda m: sum(h.energy_consumption for h in m.household_agents),
             "cumulative_energy": lambda m: m.cumulative_energy,
-            "ambient_mean_tempC": lambda m: float(
-                np.nanmean([getattr(h, "ambient_tempC", np.nan) for h in m.household_agents])
-            ),
+            "ambient_mean_tempC": _mean_ambient_temp,
             "climate_hour_index": lambda m: m.current_hour,
             "config_name": lambda m: getattr(m, "config_name", ""),
             "config_date": lambda m: getattr(m, "config_date", ""),
@@ -451,7 +486,8 @@ class EnergyModel(mesa.Model):
         # 1) reset + add precomputed base load
         for h in self.household_agents:
             h.reset_energy()
-            h.energy_consumption += h.calc_base_energy()
+            h.base_kwh = h.calc_base_energy()
+            h.energy_consumption += h.base_kwh
 
         # 2) update residents
         for p in self.person_agents:
@@ -485,6 +521,30 @@ class EnergyModel(mesa.Model):
                         cool_slope=self.cooling_slope_kWh_per_deg,
                     )
 
+        # 4) aggregate by property type + wealth group
+        # enforce total hourly cap per dwelling after all components (base + climate + spikes)
+        max_total = getattr(self, "max_total_kwh_per_hour", None)
+        if max_total is not None:
+            for h in self.household_agents:
+                if h.energy_consumption > max_total:
+                    pre = h.energy_consumption
+                    clip = pre - max_total
+                    # proportional attribution for diagnostics
+                    base = getattr(h, "base_kwh", 0.0)
+                    heat = getattr(h, "heat_kwh", 0.0)
+                    spike = getattr(h, "spike_kwh", pre - base - heat)
+                    denom = base + heat + spike
+                    if denom <= 0:
+                        fb = fh = fs = 0.0
+                    else:
+                        fb = clip * (base / denom)
+                        fh = clip * (heat / denom)
+                        fs = clip * (spike / denom)
+                    h.cap_clip_total = clip
+                    h.cap_clip_base = fb
+                    h.cap_clip_heat = fh
+                    h.cap_clip_spike = fs
+                    h.energy_consumption = max_total
 
         # 4) aggregate by property type + wealth group
         self.energy_by_type = {t: 0.0 for t in PROPERTY_TYPES}
