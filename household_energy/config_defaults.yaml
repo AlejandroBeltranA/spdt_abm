@@ -1,0 +1,258 @@
+meta:
+  name: default
+  date: 2026-01-27
+  notes: Baseline placeholders
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HOW TO USE THIS CONFIG
+#  - This file provides defaults. Prefer creating a small override YAML
+#    (e.g., my_scenario.yaml) and only set the keys you want to change.
+#    Overrides deep-merge on top of these defaults.
+#  - Common override knobs (and what they do):
+#      model:
+#        heating_setpoint_C / cooling_threshold_C  → comfort / heat-load shifts
+#        heating_slope_kWh_per_deg / cooling_slope_kWh_per_deg → climate sensitivity
+#        energy_per_person_home / away → occupant spikes baseline
+#        heatpump_adoption_rate / heatpump_class_weight → HP uptake & targeting
+#        level_scale → global calibration multiplier
+#      schedules:
+#        default_profiles (leave/return hours), wfh_share, type_map (map schedule_type → hours)
+#      households:
+#        hidp_csv path/join keys (UPRN merge), resident_cap, bedroom_multiplier,
+#        n_residents_default (fallback occupancy when hh_n_people missing)
+#      envelope_levers / systems:
+#        multipliers for CWI/SWI/loft/floor/glazing; system level/heating slope tweaks
+#  - New keys in overrides are kept in ModelConfig.raw; only referenced keys affect behavior.
+#  - Keep overrides minimal and dated in meta for traceability.
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  # Scenario-level toggles and defaults
+  # NOTE: Baseline (non-climate) now uses a fixed meter-anchored load.
+  #       Structural multipliers (SAP, envelope, system) no longer alter baseline;
+  #       they only shape heating via slopes/capacity.
+  #       Baseline uses property_type_mult_base; heating uses pt_heat_mult.
+  local_tz: Europe/London
+  heating_setpoint_C: 18.5      # occupied setpoint (can be archetype-adjusted)
+  cooling_threshold_C: 24.0
+  heating_slope_kWh_per_deg: 0.05  # base slope; adjust per archetype/system
+  cooling_slope_kWh_per_deg: 0.03
+  energy_per_person_home: 0.06  # kWh/h additional when home
+  energy_per_person_away: 0.01  # kWh/h standby when away
+  level_scale: 1.0           # global multiplier for baseline level (use overrides to tune)
+  # Baseline (non-climate) anchor: use meter-based constant, not EPC annual
+  use_epc_for_baseline: false
+  baseline_anchor_kwh_per_hour: 0.40
+  baseline_area_ref_m2: 70.0
+  baseline_area_exp: 0.20
+  baseline_area_clip: [0.85, 1.25]
+  property_type_mult_base:
+    mid-terraced house: 1.00
+    end-terraced house: 1.05
+    semi-detached house: 1.10
+    detached house: 1.20
+    small block of flats/dwelling converted in to flats: 0.90
+    block of flats: 0.85
+    large block of flats: 0.85
+    flat in mixed use building: 0.90
+  # Heat slope shaping (bounded, sublinear)
+  heat_slope_area_exp: 0.6
+  heat_slope_min: 0.0
+  heat_slope_max: 0.10      # kWh per degC-hour cap
+  max_heat_kwh_per_hour: 20.0  # absolute hourly heating cap
+  max_total_kwh_per_hour: 20.0  # absolute per-dwelling hourly cap (baseline + heating + spikes)
+  max_base_kwh_per_hour: 1.5    # cap on baseline (non-climate) hourly load
+  # Duty-cycle heating model
+  loss_to_duty_k: 3.0           # larger -> slower ramp to full duty
+  base_heat_capacity: 8.0       # kWh/h nominal capacity
+  heat_capacity_area_exp: 0.5   # sublinear scaling with area for capacity
+  min_heat_capacity: 4.0        # kWh/h floor
+  pt_heat_mult:
+    detached: 1.40
+    semi-detached: 1.20
+    terraced: 1.00
+    flat: 0.80
+    default: 1.00
+  setpoint_setback_C: 2.0      # drop when away/asleep
+  holiday_prob_daily: 0.002    # share of homes away per day (placeholder)
+  boiler_efficiency: 0.90
+  heatpump_cop_ref: 2.80
+  heatpump_adoption_rate: 0.0    # 0..1 or per-class dict
+  heatpump_class_weight:
+    priority: 1.4
+    possible: 1.0
+    difficult: 0.6
+    non-possible: 0.0
+  apply_structural_multipliers: true   # if false, use calibrated annual as-is
+
+archetypes:
+  # Property-type multipliers (UA/area/air-tightness/thermal mass). 1.0 = neutral.
+  # Tune UA up for leakier stock, down for tighter; adjust area caps for size effects.
+  detached:
+    ua_mult: 1.15          # heat-loss multiplier vs base
+    area_mult_cap: [0.7, 1.6]
+    infiltration_mult: 1.10
+    thermal_mass_class: medium
+  semi-detached:
+    ua_mult: 1.05
+    area_mult_cap: [0.7, 1.4]
+    infiltration_mult: 1.0
+    thermal_mass_class: medium
+  terraced:
+    ua_mult: 0.95
+    area_mult_cap: [0.7, 1.3]
+    infiltration_mult: 0.95
+    thermal_mass_class: medium
+  flat:
+    ua_mult: 0.85
+    area_mult_cap: [0.6, 1.2]
+    infiltration_mult: 0.9
+    thermal_mass_class: light
+  bungalow:
+    ua_mult: 1.00
+    area_mult_cap: [0.7, 1.4]
+    infiltration_mult: 1.0
+    thermal_mass_class: light
+
+age_bands:
+  # Optional age-layer multipliers applied on top of archetypes.
+  pre-1919:
+    ua_mult: 1.10
+    infiltration_mult: 1.10
+  1930-1980:
+    ua_mult: 1.00
+    infiltration_mult: 1.00
+  post-2000:
+    ua_mult: 0.90
+    infiltration_mult: 0.90
+
+controls:
+  # Control-tech multipliers (lower = savings). Replace with field evidence if available.
+  programmer_and_thermostat: 0.97
+  programmer_only: 0.99
+  smart_meter: 0.98
+  trvs: 0.97
+  weather_compensation: 0.95
+  smart: 0.98
+
+envelope_levers:
+  # Stackable retrofit multipliers applied when *_flag == 1
+  cavity_wall: 0.92
+  solid_wall: 0.90
+  loft_insulation: 0.95
+  floor_insulation: 0.96
+  glazing: 0.96
+  airtightness_improvement: 0.95
+
+systems:
+  # Heating system level/slope multipliers; refine with measured performance if available.
+  electric_heating:
+    level_mult: 1.05
+    heating_slope_mult: 1.00
+  heat_pump:
+    level_mult: 0.85
+    heating_slope_mult: 0.70
+    cop_curve: [ [15, 3.2], [7, 2.8], [0, 2.4], [-5, 2.0] ]
+  gas_boiler:
+    level_mult: 1.00
+    heating_slope_mult: 1.00
+  storage_heater:
+    level_mult: 1.10
+    heating_slope_mult: 1.05
+  default:
+    level_mult: 1.00
+    heating_slope_mult: 1.00
+
+schedules:
+  default_profiles:
+    - name: Parent
+      leave: 7
+      return: 15
+    - name: Worker
+      leave: 9
+      return: 17
+    - name: Homebody
+      leave: null
+      return: null
+  wfh_share: 0.20   # placeholder mix of profiles
+  # Optional: map incoming schedule_type strings to archetypes (leave/return hours)
+  type_map:
+    retired_household:        {leave: null, return: null}
+    unemployed_or_inactive:   {leave: null, return: null}
+    working_adult_household:  {leave: 9,    return: 17}
+    dual_earner_household:    {leave: 8,    return: 18}
+    family_with_children:     {leave: 9,    return: 15}   # school run
+    single_parent_with_children: {leave: 8, return: 15}
+    student_household:        {leave: 10,   return: 16}
+
+# Optional household-level settings (keep legacy behavior if absent)
+households:
+  hidp_csv: null          # path to hidp_uprn_matches_tiered.csv (optional)
+  merge_on: uprn_chr       # column in CSV to match GeoJSON UPRN
+  geojson_uprn_field: UPRN # fallbacks: UPRN, uprn, fid
+  resident_cap: 10         # max residents per household
+  bedroom_multiplier:      # applied if size_band is present (1–4 cap)
+    1: 0.75
+    2: 1.00
+    3: 1.15
+    4: 1.30
+  n_residents_default: 2   # legacy fallback when hh_n_people missing
+
+appliance_loads:
+  # Non-HVAC loads (kWh/day). Adjust from survey / smart meter baselines.
+  base_kWh_per_day: 6.0
+  spike_kWh: 0.2
+  spike_per_person_per_day: 6
+  lighting_kWh_per_day: 2.0
+
+occupancy:
+  # Average occupancy hints (used in notebooks/utilities; model uses hh_n_people when present).
+  avg_persons: 2.3
+  persons_by_property_type:
+    flat: 1.8
+    terraced: 2.3
+    semi-detached: 2.6
+    detached: 2.9
+
+meters:
+  # Shares of special meters (for tariff/billing analysis).
+  dual_rate_share: 0.0   # set if Economy-7 style meters present
+  heat_meter_share: 0.0
+
+# policies:
+#   # Template: declare cohorts + actions applied to the GeoDataFrame before building the model.
+#   # Copy this block into an override YAML and edit; left commented here for reference.
+#   hp_low_income_medium_edu:
+#     eligibility:
+#       hh_income_band: [q1_lowest, q2_low]
+#       hh_edu_detail: [education_other, upper_further]
+#     actions:
+#       is_heatpump_candidate: 1
+#       heatpump_candidate_class: priority
+#     adoption:
+#       heatpump_adoption_rate: 1.0   # optional policy-specific override
+#
+#   kids_envelope:
+#     eligibility:
+#       schedule_type: [family_with_children, single_parent_with_children]
+#     actions:
+#       loft_ins_flag: 1
+#       glazing_flag: 1
+#
+#   elderly_smart_setback:
+#     eligibility:
+#       schedule_type: [retired_household]
+#     actions:
+#       meter_type: smart
+#     model_overrides:
+#       heating_setpoint_C_delta: -1.0   # apply a -1°C setback (interpretation handled by caller)
+#
+#   hp_social_rent:
+#     eligibility:
+#       tenure: [social_rent]
+#     actions:
+#       is_heatpump_candidate: 1
+#       heatpump_candidate_class: priority
+#     adoption:
+#       heatpump_adoption_rate: 1.0
+# Note: values above are placeholders. Replace with SAP/EDRP/SMETER-derived parameters.
