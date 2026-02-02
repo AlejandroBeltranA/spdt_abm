@@ -94,7 +94,7 @@ energy-run-lsoa \
 Outputs live under `results_lsoa/<LSOA>/run_<stamp>/` with `abm_year_<LSOA>_<stamp>.parquet/.csv` plus hourly model timeseries; a combined rollup is saved as `abm_year_all_<stamp>.*`.
 
 ### Visual teaser
-![ABM animation](notebooks/abm_animation_synthpop.mp4)
+![ABM animation](notebooks/abm_animation_synthpop.gif)
 
 ---
 
