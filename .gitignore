@@ -288,3 +288,6 @@ dist/
 *.html
 *.sh
 /.github
+# Allow publishing this single map file
+!docs/maps/
+!docs/maps/scenario_comparison_map.html
