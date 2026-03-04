@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Iterable, List
 
 import geopandas as gpd
 import matplotlib
