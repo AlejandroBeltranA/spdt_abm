@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
+from typing import Optional, Literal
 
 class ClimateField:
     """
@@ -64,13 +65,6 @@ class ClimateField:
         gaps = int((per_ts != P).sum())
         is_rect = (len(df) == T * P) and (gaps == 0)
 
-        summary = dict(
-            rows=len(df), T=int(T), P=int(P), TP=int(T * P),
-            dupes=dupes, missing_timestamps=gaps,
-            min_per_ts=min_per_ts, med_per_ts=med_per_ts, max_per_ts=max_per_ts,
-            rectangular=is_rect,
-        )
-
         if verbose:
             print(f"[Climate parquet check]")
             print(f"  File: {parquet_path}")
@@ -90,7 +84,12 @@ class ClimateField:
                         print(f"    • {ts} → {int(n)}")
 
         if return_summary:
-            return summary
+            return dict(
+                rows=len(df), T=int(T), P=int(P), TP=int(T*P),
+                dupes=dupes, missing_timestamps=gaps,
+                min_per_ts=min_per_ts, med_per_ts=med_per_ts, max_per_ts=max_per_ts,
+                rectangular=is_rect,
+            )
         return is_rect
     def __init__(self, parquet_path: str):
         df = pd.read_parquet(parquet_path, engine="pyarrow")[
