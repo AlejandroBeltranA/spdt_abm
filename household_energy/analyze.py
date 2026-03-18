@@ -24,6 +24,8 @@ Usage:
     energy-analyze --geojson data/abm_households_newcastle.geojson --outdir results
 """
 
+from __future__ import annotations
+
 # ───────────────────────── imports ──────────────────────────────
 import argparse
 import random
@@ -62,15 +64,17 @@ def reset_agent_index(df: pd.DataFrame) -> pd.DataFrame:
     """Flatten Mesa DataCollector agent MultiIndex to regular columns."""
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
-    # Standardize agent id column name (first matching candidate wins)
-    id_candidates = ("AgentID", "AgentID_1", "agent_id")
-    found = next((c for c in id_candidates if c in df.columns), None)
-    if found:
-        df = df.rename(columns={found: "agent_id"})
-    elif "agent_id" not in df.columns:
-        fallback = next((c for c in df.columns if "agent" in c.lower() and "id" in c.lower()), None)
-        if fallback:
-            df = df.rename(columns={fallback: "agent_id"})
+    # Standardize agent id column name
+    for cand in ("AgentID", "AgentID_1", "agent_id"):
+        if cand in df.columns:
+            df = df.rename(columns={cand: "agent_id"})
+            break
+    if "agent_id" not in df.columns:
+        # Last-resort: if a column looks like agent ID
+        for c in df.columns:
+            if "agent" in c.lower() and "id" in c.lower():
+                df = df.rename(columns={c: "agent_id"})
+                break
     return df
 
 # ────────────────────── inference helpers ───────────────────────
