@@ -9,6 +9,12 @@ results/
 *.csv
 *.parquet
 *.pkl
+!docs/**/*.html
+
+# ── local-only research and scratch notebooks ──────────────────────
+research/
+docs/research/
+notebooks/testing/
 
 # ── OS / editor cruft ────────────────────
 .DS_Store
@@ -256,6 +262,9 @@ __pycache__/
 !/data/README.md
 !/data/LICENSE*        # allow LICENSE / LICENSE.md
 
+# Keep published docs pages trackable despite global HTML ignore.
+!docs/**/*.html
+
 
 
 # Results / artefacts
@@ -291,3 +300,18 @@ dist/
 # Allow publishing this single map file
 !docs/maps/
 !docs/maps/scenario_comparison_map.html
+!docs/**/*.html
+
+# Notebook visibility policy: only publish the selected user-facing notebooks.
+notebooks/*.ipynb
+!notebooks/01-climate-prep.ipynb
+!notebooks/energy-model-validation.ipynb
+!notebooks/abm_end_to_end_tutorial.ipynb
+!notebooks/full_run_example.ipynb
+!notebooks/household_energy_abm_tutorial.ipynb
+!notebooks/serl_calibration_clean.ipynb
+!notebooks/scenario_testing_v2.ipynb
+!notebooks/scenario_testing_v2_1.ipynb
+
+# Keep scripts local-only.
+scripts/
