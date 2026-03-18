@@ -56,12 +56,14 @@ energy-run
 """
 
 
+from __future__ import annotations
+
 import argparse
-import random
 from pathlib import Path
 import time
 
 import cloudpickle as pickle
+import geopandas as gpd
 import pandas as pd
 
 from household_energy.model import EnergyModel
@@ -73,9 +75,6 @@ from household_energy.config import load_config
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run the ABM and export time-series.")
     p.add_argument("geojson", help="Path to neighbourhood GeoJSON")
-
-    p.add_argument("--config", default=None,
-                   help="Optional YAML config override (deep-merged on top of defaults).")
 
     # Optional household enrichment (HIDP + socio-demographics)
     p.add_argument("--hidp-csv", default=None,
@@ -125,19 +124,11 @@ def main() -> None:
         raise ValueError("Provide both --start-utc and --end-utc, or neither.")
 
     # 1 ─ Load geometry and climate metadata
-    try:
-        import geopandas as gpd  # type: ignore
-    except Exception as e:
-        raise ModuleNotFoundError(
-            "Missing dependency `geopandas`. Install it (e.g., `pip install geopandas`) "
-            "or use an environment that includes GeoPandas."
-        ) from e
-
     gdf = gpd.read_file(args.geojson)
 
     # Optional household enrichment CSV (HIDP + socio-demographics). No-op if not provided.
-    cfg = load_config(args.config)
-    hidp_path = args.hidp_csv or cfg.households.get("hidp_csv")
+    cfg_defaults = load_config(None)
+    hidp_path = args.hidp_csv or cfg_defaults.households.get("hidp_csv")
     if hidp_path:
         hidp_csv = Path(hidp_path)
         if not hidp_csv.exists():
@@ -146,7 +137,7 @@ def main() -> None:
         hidp_df = pd.read_csv(hidp_csv, low_memory=False)
         hidp_df.columns = [c.strip() for c in hidp_df.columns]
 
-        geo_uprn_field = cfg.households.get("geojson_uprn_field", "UPRN")
+        geo_uprn_field = cfg_defaults.households.get("geojson_uprn_field", "UPRN")
         if geo_uprn_field not in gdf.columns:
             for alt in ["UPRN", "uprn", "fid"]:
                 if alt in gdf.columns:
@@ -155,7 +146,7 @@ def main() -> None:
         if geo_uprn_field not in gdf.columns:
             raise KeyError(f"No UPRN-like field found in GeoJSON (looked for {geo_uprn_field}).")
 
-        merge_on_csv = cfg.households.get("merge_on", "uprn_chr")
+        merge_on_csv = cfg_defaults.households.get("merge_on", "uprn_chr")
         # Ensure join keys are comparable (force to string)
         gdf[geo_uprn_field] = gdf[geo_uprn_field].astype(str).str.strip()
         hidp_df[merge_on_csv] = hidp_df[merge_on_csv].astype(str).str.strip()
@@ -177,19 +168,6 @@ def main() -> None:
         if unmatched:
             print(f"⚠️  {unmatched:,} households missing HIDP match (left join).")
         print(f"✅ Enriched households: {before:,} → {len(gdf):,} rows (merge on {geo_uprn_field} ↔ {merge_on_csv})")
-
-        # Wealth: prefer direct hh_income_band (already 5 buckets). Fallback is deterministic.
-        income_col = gdf.get("hh_income_band")
-        if income_col is not None:
-            gdf["wealth_bucket"] = income_col.astype(str).str.strip().str.lower()
-        else:
-            bands = ["q1_lowest", "q2_low", "q3_mid", "q4_high", "q5_highest"]
-            def _fallback_wealth(key):
-                rng = random.Random(hash(key) & 0xFFFFFFFF)
-                return rng.choice(bands)
-            gdf["wealth_bucket"] = [
-                _fallback_wealth(k) for k in gdf.get(geo_uprn_field, gdf.index).astype(str)
-            ]
 
     cf = ClimateField(args.climate)
 
@@ -224,7 +202,6 @@ def main() -> None:
         local_tz=args.local_tz,
         collect_agent_level=not args.no_agent_level,
         agent_collect_every=args.agent_collect_every,
-        config_path=args.config,
     )
     init_s = time.perf_counter() - t0
     print(f"Init: {init_s:.2f}s | households={len(model.household_agents):,}, persons={len(model.person_agents):,}")
