@@ -288,3 +288,23 @@ dist/
 *.html
 *.sh
 /.github
+
+# Local-only working areas
+docs/research/
+notebooks/testing/
+/testing/
+settings.json
+
+# Publish docs html pages
+!docs/**/*.html
+
+# Notebook visibility policy: only publish selected user-facing notebooks.
+notebooks/*.ipynb
+!notebooks/01-climate-prep.ipynb
+!notebooks/energy-model-validation.ipynb
+!notebooks/abm_end_to_end_tutorial.ipynb
+!notebooks/full_run_example.ipynb
+!notebooks/household_energy_abm_tutorial.ipynb
+!notebooks/serl_calibration_clean.ipynb
+!notebooks/scenario_testing_v2.ipynb
+!notebooks/scenario_testing_v2_1.ipynb
