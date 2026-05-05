@@ -298,7 +298,7 @@ settings.json
 # Publish docs html pages
 !docs/**/*.html
 
-# Notebook visibility policy: only publish selected user-facing notebooks.
+# Notebook visibility policy: user-facing tutorials + paper research notebooks.
 notebooks/*.ipynb
 !notebooks/01-climate-prep.ipynb
 !notebooks/energy-model-validation.ipynb
@@ -308,3 +308,7 @@ notebooks/*.ipynb
 !notebooks/serl_calibration_clean.ipynb
 !notebooks/scenario_testing_v2.ipynb
 !notebooks/scenario_testing_v2_1.ipynb
+# Paper research notebooks
+!notebooks/too_hot_to_handle_figures.ipynb
+!notebooks/sensitivity_analysis.ipynb
+!notebooks/paper2_policy_scenarios.ipynb
