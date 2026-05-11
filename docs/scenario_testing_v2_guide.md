@@ -1,6 +1,6 @@
 # Scenario Testing v2 – Implementation Guide (dashboard-ready)
 
-This guide distills the `notebooks/scenario_testing_v2.ipynb` workflow into the pieces you need to wire up a manual dashboard with simple controls/toggles. It covers expected inputs, key variables and categories, and how each scenario manipulates the GeoDataFrame before running the model.
+This guide distills the `notebooks/policy_scenarios_detailed.ipynb` and `notebooks/policy_scenarios_summary.ipynb` workflows into the pieces you need to wire up a manual dashboard with simple controls/toggles. It covers expected inputs, key variables and categories, and how each scenario manipulates the GeoDataFrame before running the model.
 
 ---
 

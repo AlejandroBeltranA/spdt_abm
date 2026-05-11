@@ -39,10 +39,15 @@ model:
   cooling_slope_kWh_per_deg: 0.03
   energy_per_person_home: 0.06  # kWh/h additional when home
   energy_per_person_away: 0.01  # kWh/h standby when away
+  awake_home_spike_mult: 1.0    # occupancy spike multiplier when person is home and awake
+  sleep_home_spike_mult: 0.3    # occupancy spike multiplier when person is home but asleep
   level_scale: 1.0           # global multiplier for baseline level (use overrides to tune)
   # Baseline (non-climate) anchor: use meter-based constant, not EPC annual
   use_epc_for_baseline: false
   baseline_anchor_kwh_per_hour: 0.40
+  use_separate_fuel_baseline_anchors: false
+  baseline_anchor_elec_kwh_per_hour: 0.40
+  baseline_anchor_gas_kwh_per_hour: 0.00
   baseline_area_ref_m2: 70.0
   baseline_area_exp: 0.20
   baseline_area_clip: [0.85, 1.25]
@@ -55,18 +60,99 @@ model:
     block of flats: 0.85
     large block of flats: 0.85
     flat in mixed use building: 0.90
+  # Optional fuel-specific baseline maps (fallback to property_type_mult_base).
+  property_type_mult_base_electric:
+    mid-terraced house: 1.00
+    end-terraced house: 1.05
+    semi-detached house: 1.10
+    detached house: 1.20
+    small block of flats/dwelling converted in to flats: 0.90
+    block of flats: 0.85
+    large block of flats: 0.85
+    flat in mixed use building: 0.90
+  property_type_mult_base_gas:
+    mid-terraced house: 1.00
+    end-terraced house: 1.05
+    semi-detached house: 1.10
+    detached house: 1.20
+    small block of flats/dwelling converted in to flats: 0.90
+    block of flats: 0.85
+    large block of flats: 0.85
+    flat in mixed use building: 0.90
   # Heat slope shaping (bounded, sublinear)
   heat_slope_area_exp: 0.6
   heat_slope_min: 0.0
   heat_slope_max: 0.10      # kWh per degC-hour cap
-  max_heat_kwh_per_hour: 20.0  # absolute hourly heating cap
-  max_total_kwh_per_hour: 20.0  # absolute per-dwelling hourly cap (baseline + heating + spikes)
+  heating_months: null      # list of months (1-12) when heating is active; null = no restriction
+  max_heat_kwh_per_hour: 30.0  # absolute hourly heating cap
+  max_total_kwh_per_hour: 32.0  # absolute per-dwelling hourly cap (baseline + heating + spikes)
   max_base_kwh_per_hour: 1.5    # cap on baseline (non-climate) hourly load
   # Duty-cycle heating model
   loss_to_duty_k: 3.0           # larger -> slower ramp to full duty
   base_heat_capacity: 8.0       # kWh/h nominal capacity
   heat_capacity_area_exp: 0.5   # sublinear scaling with area for capacity
   min_heat_capacity: 4.0        # kWh/h floor
+  # Optional: allocate some occupancy spikes to gas for hot water (gas-heated homes)
+  # Baseline gas allocation for gas-heated homes (legacy only; ignored when
+  # use_separate_fuel_baseline_anchors=true)
+  gas_base_share: 0.0
+  gas_base_share_communal: 0.0
+  gas_spike_share: 0.0
+  gas_spike_share_communal: 0.0
+  # Intraday structure (explicit 24h profiles, normalized internally to mean=1)
+  # These help recover realistic diurnal peaks that climate-only heating cannot produce.
+  heating_profile_24h: [1.20, 1.15, 1.10, 1.00, 0.95, 1.00, 1.10, 1.20, 1.05, 0.95, 0.90, 0.90, 0.90, 0.90, 0.90, 0.95, 1.00, 1.10, 1.25, 1.30, 1.25, 1.20, 1.15, 1.10]
+  dhw_profile_24h:     [0.55, 0.50, 0.45, 0.40, 0.45, 0.75, 1.20, 1.35, 1.10, 0.90, 0.85, 0.85, 0.85, 0.85, 0.90, 1.00, 1.10, 1.25, 1.35, 1.30, 1.20, 1.00, 0.80, 0.65]
+  heating_profile_24h_electric: null  # per-hour multiplier for electric-heated homes; null = use heating_profile_24h
+  dhw_profile_24h_electric: null      # per-hour DHW share for electric-heated homes; null = use dhw_profile_24h
+  dhw_daily_kwh_per_home: 0.0   # fixed household DHW load component (kWh/day/home)
+  dhw_daily_kwh_per_person: 0.0 # occupancy-linked DHW component (kWh/day/person)
+  dhw_away_mult: 0.5            # minimum DHW occupancy multiplier at zero occupancy
+  heating_occupancy_away_mult: 0.5 # minimum heating/cooling occupancy multiplier at zero occupancy
+  heating_peak_morning_mult: 1.0
+  heating_peak_evening_mult: 1.0
+  heating_winter_morning_mult: 1.0
+  heating_winter_evening_mult: 1.0
+  dhw_peak_morning_mult: 1.0
+  dhw_peak_evening_mult: 1.0
+  # Explicit fuel/system mappings to avoid heuristic guessing.
+  # Resolution order: combo map -> heating system map -> fuel type map -> flags fallback.
+  fuel_type_bucket_map:
+    mains gas: gas
+    electricity: electric
+    lpg: gas
+    oil: other
+    solid: other
+    biomass: other
+    other: other
+    none: other
+    no fuel: electric
+  heating_system_bucket_map:
+    heat pump: electric
+    storage heaters: electric
+    room heaters: electric
+    boiler: gas
+    communal: gas
+    "": other
+  heating_fuel_combo_map:
+    mains gas|boiler: gas
+    mains gas|communal: gas
+    mains gas|room heaters: gas
+    mains gas|storage heaters: gas
+    mains gas|heat pump: electric
+    electricity|boiler: electric
+    electricity|communal: electric
+    electricity|room heaters: electric
+    electricity|storage heaters: electric
+    electricity|heat pump: electric
+    other|communal: gas
+    none|communal: gas
+    no fuel|communal: electric
+    no fuel|: electric
+    biomass|communal: other
+    oil|boiler: other
+    solid|boiler: other
+  communal_system_labels: ["communal", "district"]
   pt_heat_mult:
     detached: 1.40
     semi-detached: 1.20
@@ -84,6 +170,15 @@ model:
     difficult: 0.6
     non-possible: 0.0
   apply_structural_multipliers: true   # if false, use calibrated annual as-is
+  sap_scaling:
+    slope_mult_hi: 1.30   # applied at lowest SAP (sap_lo)
+    slope_mult_lo: 0.70   # applied at highest SAP (sap_hi)
+    cap_mult_hi:   1.15   # heating capacity multiplier at sap_lo
+    cap_mult_lo:   0.85   # heating capacity multiplier at sap_hi
+    spike_mult_hi: 1.20   # spike multiplier at sap_lo
+    spike_mult_lo: 0.80   # spike multiplier at sap_hi
+    sap_lo: 40.0          # clamp lower SAP bound
+    sap_hi: 90.0          # clamp upper SAP bound
 
 archetypes:
   # Property-type multipliers (UA/area/air-tightness/thermal mass). 1.0 = neutral.
@@ -146,6 +241,9 @@ envelope_levers:
 
 systems:
   # Heating system level/slope multipliers; refine with measured performance if available.
+  communal:
+    level_mult: 0.90
+    heating_slope_mult: 0.75
   electric_heating:
     level_mult: 1.05
     heating_slope_mult: 1.00
@@ -168,22 +266,40 @@ schedules:
     - name: Parent
       leave: 7
       return: 15
+      wake: 6
+      sleep: 22
     - name: Worker
       leave: 9
       return: 17
+      wake: 6
+      sleep: 23
     - name: Homebody
       leave: null
       return: null
+      wake: 7
+      sleep: 23
   wfh_share: 0.20   # placeholder mix of profiles
+  default_wake_hour: 7
+  default_sleep_hour: 23
+  awake_windows:
+    HOME_ALLDAY:      {leave: 7, return: 23}
+    WORK_STD:         {leave: 6, return: 23}
+    WORK_EARLY:       {leave: 5, return: 22}
+    WORK_LATE:        {leave: 7, return: 23}
+    PART_TIME_AM:     {leave: 6, return: 23}
+    PART_TIME_PM:     {leave: 7, return: 23}
+    SCHOOL_RUN:       {leave: 6, return: 22}
+    STUDENT:          {leave: 7, return: 23}
+    OUT_LONG:         {leave: 6, return: 23}
   # Optional: map incoming schedule_type strings to archetypes (leave/return hours)
   type_map:
-    retired_household:        {leave: null, return: null}
-    unemployed_or_inactive:   {leave: null, return: null}
-    working_adult_household:  {leave: 9,    return: 17}
-    dual_earner_household:    {leave: 8,    return: 18}
-    family_with_children:     {leave: 9,    return: 15}   # school run
-    single_parent_with_children: {leave: 8, return: 15}
-    student_household:        {leave: 10,   return: 16}
+    retired_household:        {leave: null, return: null, wake: 7, sleep: 22}
+    unemployed_or_inactive:   {leave: null, return: null, wake: 7, sleep: 23}
+    working_adult_household:  {leave: 9,    return: 17,   wake: 6, sleep: 23}
+    dual_earner_household:    {leave: 8,    return: 18,   wake: 6, sleep: 23}
+    family_with_children:     {leave: 9,    return: 15,   wake: 6, sleep: 22}   # school run
+    single_parent_with_children: {leave: 8, return: 15,   wake: 6, sleep: 22}
+    student_household:        {leave: 10,   return: 16,   wake: 7, sleep: 24}
 
 # Optional household-level settings (keep legacy behavior if absent)
 households:
@@ -218,6 +334,18 @@ meters:
   # Shares of special meters (for tariff/billing analysis).
   dual_rate_share: 0.0   # set if Economy-7 style meters present
   heat_meter_share: 0.0
+
+# Optional: apply SERL-derived multipliers (hourly + monthly) by segment (seg3).
+# This is an *emulation layer* intended for calibration/target-matching work.
+# Enable only when you have built a profiles CSV from SERL targets.
+serl_profiles:
+  enabled: false
+  profiles_csv: null          # e.g., data/serl_8963_targets/seg3_multipliers_num_occupants_2023.csv
+  seg3_column: none           # column in the input GeoDataFrame containing SERL-like seg3_value labels
+  fallback_value: none        # used when seg3_column missing/empty
+  alpha: 1.0                  # 0..1 blend (0=no effect, 1=full multiplier)
+  use_hourly: true
+  use_monthly: true
 
 # policies:
 #   # Template: declare cohorts + actions applied to the GeoDataFrame before building the model.

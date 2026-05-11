@@ -291,9 +291,11 @@ dist/
 
 # Local-only working areas
 docs/research/
+docs/private/
 notebooks/testing/
 /testing/
 settings.json
+examples/
 
 # Publish docs html pages
 !docs/**/*.html
@@ -306,8 +308,8 @@ notebooks/*.ipynb
 !notebooks/full_run_example.ipynb
 !notebooks/household_energy_abm_tutorial.ipynb
 !notebooks/serl_calibration_clean.ipynb
-!notebooks/scenario_testing_v2.ipynb
-!notebooks/scenario_testing_v2_1.ipynb
+!notebooks/policy_scenarios_detailed.ipynb
+!notebooks/policy_scenarios_summary.ipynb
 # Paper research notebooks
 !notebooks/too_hot_to_handle_figures.ipynb
 !notebooks/sensitivity_analysis.ipynb

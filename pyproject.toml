@@ -3,30 +3,86 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-requires-python = ">=3.11"
 name = "household-energy-abm"
 version = "0.1.0"
+description = "Hour-by-hour residential energy demand ABM for GeoJSON neighbourhoods, built on Mesa 3 + mesa-geo."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [
+  { name = "SPDT" }
+]
+keywords = [
+  "agent-based model",
+  "energy demand",
+  "residential",
+  "mesa",
+  "heat pump",
+  "UK",
+  "GIS",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+
+# Core dependencies — required for the headless runner and batch tools
 dependencies = [
   "mesa==3.2.0",
   "mesa-geo>=0.9.1",
   "pandas",
   "numpy",
   "pyarrow",
+  "scipy",
+  "geopandas",
+  "shapely",
+  "cloudpickle",
+  "pyyaml",
+  "openpyxl",
+]
+
+[project.optional-dependencies]
+# Visualisation extras — maps, plots, interactive dashboard
+viz = [
   "matplotlib",
   "folium",
   "contextily",
-  "cloudpickle",
-  "scipy",
   "solara>=1.28",
-  "openpyxl"
+  "plotly",
 ]
+# Development tools — testing, notebook hygiene
+dev = [
+  "pytest>=7",
+  "pytest-cov",
+  "nbformat",
+  "nbstripout",
+  "nbconvert",
+  "ipykernel",
+]
+# Install everything
+all = [
+  "household-energy-abm[viz,dev]",
+]
+
+[project.scripts]
+energy-run        = "household_energy.run:main"
+energy-analyze    = "household_energy.analyze:main"
+energy-server     = "household_energy.server:main"
+energy-run-lsoa   = "household_energy.run_lsoa_batch:main"
+
+[project.urls]
+Repository = "https://github.com/spdt/household-energy-abm"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["household_energy*"]
 
-[project.scripts]  # optional, but recommended so you can `energy-run ...`
-energy-run = "household_energy.run:main"
-energy-analyze = "household_energy.analyze:main"
-energy-server = "household_energy.server:main"
-energy-run-lsoa = "household_energy.run_lsoa_batch:main"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
