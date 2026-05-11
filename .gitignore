@@ -314,3 +314,4 @@ notebooks/*.ipynb
 !notebooks/too_hot_to_handle_figures.ipynb
 !notebooks/sensitivity_analysis.ipynb
 !notebooks/paper2_policy_scenarios.ipynb
+!notebooks/paper3_climate_exposure.ipynb
