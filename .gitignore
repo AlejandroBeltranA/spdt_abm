@@ -297,6 +297,7 @@ settings.json
 
 # Publish docs html pages
 !docs/**/*.html
+!docs/**/*.png
 
 # Notebook visibility policy: only publish selected user-facing notebooks.
 notebooks/*.ipynb
