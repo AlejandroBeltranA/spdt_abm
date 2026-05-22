@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scenario Planning Digital Twin · Household Energy MABM</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#FAFAF8;--bg-alt:#F3F0ED;--bg-peach:#FDF0EA;
+    --ink:#1A1A1A;--ink-2:#5C5C5C;--ink-3:#8a8580;
+    --rule:#D8D0C8;--rule-2:#E8E2DC;
+    --accent:#E8521A;--accent-soft:#F4A07A;--dark:#1A1C1B;--cool:#5E8FB8;
+    --shadow:0 1px 0 rgba(26,26,26,.04), 0 4px 16px rgba(26,26,26,.06);
+    --display:Georgia, "Times New Roman", serif;
+    --body:Calibri, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+  body{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+  aside.nav{position:sticky;top:0;height:100vh;background:var(--bg);border-right:1px solid var(--rule);padding:24px 18px;overflow-y:auto}
+  .brand{font-family:var(--display);font-weight:bold;font-size:14px;color:var(--ink);letter-spacing:-.01em;line-height:1.25}
+  .brand .acc{color:var(--accent)}
+  .brand-sub{font-size:10.5px;color:var(--ink-2);margin:4px 0 22px;line-height:1.5}
+  nav ol{list-style:none;padding:0;margin:0;counter-reset:step}
+  nav li{counter-increment:step;margin:1px 0}
+  nav a{display:flex;gap:9px;align-items:flex-start;padding:6px 8px;border-radius:4px;color:var(--ink-2);text-decoration:none;font-size:12px;line-height:1.35;border-left:2px solid transparent;transition:all .12s ease}
+  nav a::before{content:counter(step,decimal-leading-zero);color:var(--ink-3);font-variant-numeric:tabular-nums;font-size:10px;padding-top:2px;min-width:20px;font-weight:600;letter-spacing:.04em}
+  nav a:hover{color:var(--ink);background:var(--bg-alt)}
+  nav a.active{color:var(--ink);background:var(--bg-peach);border-left-color:var(--accent);font-weight:600}
+  nav a.active::before{color:var(--accent)}
+  .nav-foot{margin-top:18px;padding-top:12px;border-top:1px solid var(--rule);font-size:10px;color:var(--ink-3);line-height:1.7}
+  .kbd{display:inline-block;padding:1px 5px;background:#fff;border:1px solid var(--rule);border-radius:3px;font-family:ui-monospace,"SF Mono",monospace;font-size:9.5px;color:var(--ink-2)}
+
+  main{padding:36px 48px 80px;max-width:1640px;width:100%}
+  section.step{display:none;animation:fadeIn .25s ease}
+  section.step.active{display:block}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .step-tag{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:6px}
+  h1.step-title{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 12px;line-height:1.2;color:var(--ink)}
+  .lede{font-size:13.5px;line-height:1.55;color:var(--ink-2);max-width:780px;margin-bottom:22px}
+  .lede strong{color:var(--ink);font-weight:600}
+
+  .grid-2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:20px;align-items:start}
+  .grid-2a{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:20px;align-items:start}
+  .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+
+  .card{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:16px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 6px;font-family:var(--display);font-size:13.5px;font-weight:700;color:var(--ink)}
+  .card p{margin:0 0 8px;line-height:1.55;color:var(--ink-2);font-size:12.5px}
+  .card p:last-child{margin-bottom:0}
+  .card strong{color:var(--ink);font-weight:600}
+
+  .hero{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:14px 14px;text-align:center;box-shadow:var(--shadow)}
+  .hero .v{font-family:var(--display);font-weight:700;font-size:28px;color:var(--accent);letter-spacing:-.02em;line-height:1.1}
+  .hero .v small{font-size:13px;font-weight:400;color:var(--ink-2)}
+  .hero .l{font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;margin-top:3px}
+
+  .peach{background:var(--bg-peach);border:1px solid var(--accent-soft);border-radius:6px;padding:12px 14px;color:var(--ink-2);font-size:12.5px;line-height:1.55}
+  .peach strong{color:var(--ink)}
+
+  .figcard{background:#fff;border:1px solid var(--rule);border-radius:6px;overflow:hidden;box-shadow:var(--shadow)}
+  .figcard img, .figcard video{width:100%;display:block}
+  .figcard .cap{padding:7px 12px;font-size:10.5px;color:var(--ink-3);border-top:1px solid var(--rule);background:var(--bg-alt);font-style:italic}
+  .chartwrap{position:relative;height:320px;padding:12px 10px 6px}
+
+  .controls{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;align-items:center}
+  .pill{appearance:none;background:#fff;border:1px solid var(--rule);color:var(--ink-2);padding:5px 11px;border-radius:999px;font-size:11.5px;cursor:pointer;font-family:inherit;transition:all .12s ease}
+  .pill:hover{border-color:var(--accent-soft);color:var(--ink)}
+  .pill.on{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+  .slider-row{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:12px;color:var(--ink-2)}
+  .slider-row label{min-width:130px;font-size:12px}
+  .slider-row input[type=range]{flex:1;accent-color:var(--accent)}
+  .slider-row .val{min-width:64px;text-align:right;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:700;font-family:var(--display)}
+
+  /* 3-layer pipeline diagram */
+  .pipeflow-wrap{position:relative;margin:14px 0 12px;padding:0 6px}
+  .pipeflow{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:64px;align-items:stretch;position:relative;z-index:1}
+  .pipearrows{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:3;overflow:visible}
+  .pipearrows path{fill:none;stroke:#9aa39a;stroke-width:2;stroke-linecap:round}
+  .pipearrows path.flow-input{stroke:#7aa6c7;stroke-width:2}
+  .pipearrows path.flow-model{stroke:#5d8c5e;stroke-width:2.2}
+  .pipearrows path.flow-output{stroke:#d1a060;stroke-width:2}
+  .pipecol{display:flex;flex-direction:column;gap:9px}
+  .pipecol-head{font-family:var(--display);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.16em;font-weight:700;text-align:center;margin-bottom:2px}
+  .pipebox{
+    background:#fff;border:1px solid var(--rule);border-radius:6px;padding:10px 12px;
+    cursor:pointer;transition:all .12s ease;box-shadow:var(--shadow);position:relative;
+    display:flex;align-items:center;gap:10px;
+  }
+  .pipebox:hover{border-color:var(--accent-soft);transform:translateY(-1px)}
+  .pipebox.active{border-color:var(--accent);background:var(--bg-peach)}
+  .pipebox .pb-icon{
+    width:30px;height:30px;border-radius:5px;flex-shrink:0;background:var(--bg-alt);
+    display:flex;align-items:center;justify-content:center;font-family:var(--display);
+    font-weight:700;font-size:13px;color:var(--accent);border:1px solid var(--rule);
+  }
+  .pipebox.active .pb-icon{background:#fff;border-color:var(--accent-soft);color:var(--accent)}
+  .pipebox .pb-title{font-family:var(--display);font-size:13px;font-weight:700;color:var(--ink);line-height:1.2}
+  .pipebox .pb-sub{font-size:10.5px;color:var(--ink-3);line-height:1.35;margin-top:1px}
+  .pipecol-middle .pipebox{border-color:#5d8c5e;background:#eaf3ea}
+  .pipecol-middle .pipebox:hover{border-color:#3d6e3f}
+  .pipecol-middle .pipebox.active{border-color:#3d6e3f;background:#dfedde}
+  .pipecol-middle .pipebox .pb-icon{background:#fff;border-color:#5d8c5e;color:#3d6e3f}
+  .pipecol-middle{justify-content:space-around;gap:32px}
+  .pipecol-inputs .pipebox{border-color:#7aa6c7;background:#eef4f8}
+  .pipecol-inputs .pipebox .pb-icon{background:#fff;border-color:#7aa6c7;color:#3a6889}
+  .pipecol-outputs .pipebox{border-color:#d1a060;background:#fbf3e7}
+  .pipecol-outputs .pipebox .pb-icon{background:#fff;border-color:#d1a060;color:#9b6f2a}
+  .pipedetail{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:8px;font-size:13px;line-height:1.55;color:var(--ink-2);min-height:60px;box-shadow:var(--shadow)}
+  .pipedetail strong{color:var(--ink);font-weight:600}
+  .pipedetail .pd-tag{display:inline-block;font-family:var(--display);font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-right:8px}
+
+  table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff;border-radius:6px;overflow:hidden}
+  table.tbl thead{background:var(--dark)}
+  table.tbl th{padding:8px 12px;text-align:left;color:#fff;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em}
+  table.tbl td{padding:7px 12px;border-bottom:1px solid var(--rule)}
+  table.tbl tr:nth-child(even) td{background:var(--bg-alt)}
+  table.tbl td.num{font-variant-numeric:tabular-nums;text-align:right;color:var(--ink)}
+  table.tbl tr:last-child td{border-bottom:none}
+  .neg{color:#357a39}
+
+  .eqn{background:var(--bg-alt);border:1px solid var(--rule);border-radius:6px;padding:10px 14px;font-family:"SF Mono",ui-monospace,monospace;font-size:12px;color:var(--ink);line-height:1.7;margin:8px 0;overflow-x:auto}
+  .eqn .v{color:var(--accent);font-weight:600}
+
+  .agentbox{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:16px;box-shadow:var(--shadow)}
+  .agentbox h4{margin:0 0 10px;font-family:var(--display);font-size:13.5px;font-weight:700;color:var(--ink)}
+  .agent-result{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
+  .rblock{background:var(--bg-alt);border:1px solid var(--rule);border-radius:5px;padding:9px}
+  .rblock .rl{font-size:9.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .rblock .rv{font-family:var(--display);font-size:19px;font-weight:700;color:var(--ink);margin-top:2px;font-variant-numeric:tabular-nums}
+  .rblock .ru{font-size:10.5px;color:var(--ink-3);margin-left:4px;font-weight:400;font-family:var(--body)}
+  .total-card{background:var(--bg-peach);border-color:var(--accent-soft)}
+  .total-card .rv{color:var(--accent)}
+
+  .tagline{display:inline-block;padding:1px 8px;background:var(--bg-alt);border:1px solid var(--rule);border-radius:3px;font-size:10.5px;color:var(--ink-2);margin-right:6px;font-family:ui-monospace,monospace;letter-spacing:0}
+
+  details{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:0;margin:8px 0}
+  details summary{padding:10px 14px;cursor:pointer;font-weight:600;font-size:12.5px;color:var(--ink);font-family:var(--display)}
+  details[open] summary{border-bottom:1px solid var(--rule)}
+  details .det-body{padding:11px 14px;color:var(--ink-2);font-size:12px;line-height:1.6}
+  details code{background:var(--bg-alt);padding:1px 5px;border-radius:3px;font-size:11px}
+
+  .stepnav{display:flex;justify-content:space-between;align-items:center;margin-top:36px;padding-top:18px;border-top:1px solid var(--rule)}
+  .stepbtn{appearance:none;background:#fff;border:1px solid var(--rule);color:var(--ink);padding:7px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:500;transition:all .12s ease}
+  .stepbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .stepbtn[disabled]{opacity:.3;cursor:default}
+
+  .progress{position:fixed;top:0;left:220px;right:0;height:2px;background:var(--bg-alt);z-index:50}
+  .progress .bar{height:100%;background:var(--accent);transition:width .25s ease}
+  .footer-cite{font-size:10px;color:var(--ink-3);margin-top:24px;text-align:right;letter-spacing:.04em}
+
+  /* Policy scenarios trade-off layout */
+  .tradeoff-grid{display:grid;grid-template-columns:1fr 230px 1fr;gap:18px;align-items:stretch}
+  .tradeoff-panel{background:var(--bg-alt);border:1px solid var(--rule);border-radius:6px;padding:8px 4px 10px;display:flex;flex-direction:column}
+  .tradeoff-label{font-family:var(--display);font-size:12.5px;font-weight:700;color:var(--ink);text-align:center;padding:6px 0 0}
+  .tradeoff-cap{font-size:10.5px;color:var(--ink-3);font-style:italic;text-align:center;padding:0 8px}
+  .tradeoff-callout{
+    background:var(--bg-peach);border:1px solid var(--accent-soft);border-radius:6px;
+    padding:14px 14px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;
+  }
+  .tradeoff-callout-v{font-family:var(--display);font-size:42px;font-weight:700;color:var(--accent);letter-spacing:-.02em;line-height:1}
+  .tradeoff-callout-v small{font-size:24px;font-weight:600}
+  .tradeoff-callout-l{font-size:11.5px;color:var(--ink-2);line-height:1.45;margin-top:5px}
+  .tradeoff-callout-l strong{color:var(--ink)}
+  .tradeoff-divider{width:60%;height:1px;background:var(--accent-soft);margin:12px auto 8px;opacity:.6}
+  @media (max-width:1200px){.tradeoff-grid{grid-template-columns:1fr;gap:12px}}
+
+  /* House SVG */
+  .house-stage{background:linear-gradient(180deg,#ecf0f4 0%,#eef2f6 60%,#dcd2c4 60%, #cbbfac 100%);border:1px solid var(--rule);border-radius:6px;overflow:hidden;box-shadow:var(--shadow);aspect-ratio:5/3;position:relative}
+  .house-stage.cold{background:linear-gradient(180deg,#cfd9e6 0%,#dde4ec 60%,#e8e6e0 60%,#cfd0cd 100%)}
+  .house-stage.hot{background:linear-gradient(180deg,#f8e9c9 0%,#fbe6b8 60%,#dcd2c4 60%,#cbbfac 100%)}
+  .house-stage svg{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:10px;left:10px;background:rgba(255,255,255,.9);border:1px solid var(--rule);border-radius:4px;padding:4px 9px;font-size:11px;color:var(--ink);font-weight:600}
+  .badge.warm{background:var(--bg-peach);color:var(--accent);border-color:var(--accent-soft)}
+  .badge.cool{background:#e5edf5;color:#3b6997;border-color:#b5c8db}
+
+  @keyframes snowfall{from{transform:translateY(-18px)}to{transform:translateY(140px)}}
+  .snow{animation:snowfall 3s linear infinite}
+  @keyframes glow{0%,100%{opacity:.55}50%{opacity:.95}}
+  .glow{animation:glow 2.2s ease-in-out infinite}
+  @keyframes smoke{0%{opacity:0;transform:translate(0,0) scale(.8)}40%{opacity:.7}100%{opacity:0;transform:translate(-10px,-46px) scale(1.4)}}
+  .smoke{animation:smoke 3s ease-out infinite}
+
+  @media (max-width:1100px){
+    body{grid-template-columns:1fr}
+    aside.nav{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--rule)}
+    main{padding:18px}
+    .grid-2,.grid-2a{grid-template-columns:1fr}
+    .progress{left:0}
+  }
+</style>
+</head>
+<body>
+
+<aside class="nav">
+  <div class="brand">Scenario Planning <span class="acc">Digital Twin</span></div>
+  <div class="brand-sub">Household Energy MABM · Newcastle upon Tyne</div>
+  <nav>
+    <ol id="navlist">
+      <li><a href="#overview" data-step="overview">Overview</a></li>
+      <li><a href="#climate" data-step="climate">Climate inputs</a></li>
+      <li><a href="#synthpop" data-step="synthpop">Synthetic population</a></li>
+      <li><a href="#agents" data-step="agents">Agent logic</a></li>
+      <li><a href="#smoke" data-step="smoke">Smoke test</a></li>
+      <li><a href="#animation" data-step="animation">Neighbourhood animation</a></li>
+      <li><a href="#calibration" data-step="calibration">Calibration</a></li>
+      <li><a href="#validation" data-step="validation">Validation</a></li>
+      <li><a href="#scenarios" data-step="scenarios">Policy scenarios</a></li>
+      <li><a href="#spatial" data-step="spatial">Spatial impact</a></li>
+      <li><a href="#credits" data-step="credits">Credits</a></li>
+    </ol>
+  </nav>
+  <div class="nav-foot">
+    <span class="kbd">←</span> <span class="kbd">→</span> step &nbsp;·&nbsp; <span class="kbd">1</span>…<span class="kbd">9</span> jump
+  </div>
+</aside>
+
+<div class="progress"><div class="bar" id="progressbar" style="width:0%"></div></div>
+
+<main>
+
+<section class="step active" id="overview">
+  <div class="step-tag">01 · Overview</div>
+  <h1 class="step-title">Scenario Planning Digital Twin. A Multilevel Agent-Based Model for Household Energy</h1>
+  <p class="lede">Aggregate energy models produce a single number for a city. This one tracks every dwelling and every resident independently, which is what local authorities need when deciding <em>which</em> households to retrofit and <em>where</em> the bill savings will land.</p>
+
+  <div class="grid-4" style="margin-bottom:18px">
+    <div class="hero"><div class="v">97,714</div><div class="l">Dwellings modelled</div></div>
+    <div class="hero"><div class="v">99.5%</div><div class="l">UPRN match rate</div></div>
+    <div class="hero"><div class="v">hourly</div><div class="l">Temporal resolution</div></div>
+    <div class="hero"><div class="v">2020-39</div><div class="l">Climate horizon</div></div>
+  </div>
+
+  <div class="pipeflow-wrap">
+    <svg class="pipearrows" id="pipearrows" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ar-input" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7aa6c7"/></marker>
+        <marker id="ar-model" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5d8c5e"/></marker>
+        <marker id="ar-output" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d1a060"/></marker>
+      </defs>
+    </svg>
+    <div class="pipeflow" id="pipeflow">
+      <div class="pipecol pipecol-inputs">
+        <div class="pipecol-head">Data Inputs</div>
+        <div class="pipebox" data-pipe="epc" id="box-epc">
+          <div class="pb-icon">E</div><div><div class="pb-title">EPC Register</div><div class="pb-sub">97,714 dwellings<br>UPRN · SAP · fuel-type · floor area</div></div>
+        </div>
+        <div class="pipebox" data-pipe="census" id="box-census">
+          <div class="pb-icon">C</div><div><div class="pb-title">Census 2021 + Understanding Society</div><div class="pb-sub">Household income, tenure<br>occupancy schedules</div></div>
+        </div>
+        <div class="pipebox" data-pipe="era5" id="box-era5">
+          <div class="pb-icon">W</div><div><div class="pb-title">Climate forcing</div><div class="pb-sub">ERA5 reanalysis + Climate-DT<br>2020 to 2039 · 20 grid points</div></div>
+        </div>
+      </div>
+
+      <div class="pipecol pipecol-middle">
+        <div class="pipecol-head" style="color:var(--ink-3)">Simulation Model</div>
+        <div class="pipebox" data-pipe="synthpop" id="box-synthpop">
+          <div class="pb-icon">S</div><div><div class="pb-title">Synthetic Population</div><div class="pb-sub">UPRN matching (99.5%)<br>HIDP household attributes</div></div>
+        </div>
+        <div class="pipebox active" data-pipe="model" id="box-model">
+          <div class="pb-icon">M</div><div><div class="pb-title">Household Energy MABM</div><div class="pb-sub">HouseholdAgents + PersonAgents<br>Hourly demand · 97,714 dwellings<br>Gas · Electric · Other fuels</div></div>
+        </div>
+      </div>
+
+      <div class="pipecol pipecol-outputs">
+        <div class="pipecol-head">Validation &amp; Outputs</div>
+        <div class="pipebox" data-pipe="serl" id="box-serl">
+          <div class="pb-icon">L</div><div><div class="pb-title">SERL Calibration</div><div class="pb-sub">Intraday profile shape<br>HDD slopes · summer anchor</div></div>
+        </div>
+        <div class="pipebox" data-pipe="desnz" id="box-desnz">
+          <div class="pb-icon">V</div><div><div class="pb-title">DESNZ Validation</div><div class="pb-sub">Annual sub-national totals<br>2021 to 2023 · MAPE &lt; 5%</div></div>
+        </div>
+        <div class="pipebox" data-pipe="policy" id="box-policy">
+          <div class="pb-icon">P</div><div><div class="pb-title">Policy Outputs</div><div class="pb-sub">Scenario tradeoffs<br>Bill savings by income quintile<br>Spatial benefit maps</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pipedetail" id="pipedetail">
+    <span class="pd-tag">Simulation Model</span><strong>Household Energy MABM (Mesa-Geo).</strong> At every hourly tick, each PersonAgent updates its presence and each HouseholdAgent computes baseline + heating draw, scaled by SAP, floor area, and occupancy. A full year for 97,714 dwellings runs in roughly 25 minutes on a standard laptop. Click any box to drill in.
+  </div>
+</section>
+
+<section class="step" id="climate">
+  <div class="step-tag">02 · Climate inputs</div>
+  <h1 class="step-title">Climate inputs</h1>
+  <p class="lede">Outdoor temperature at hourly resolution is the exogenous driver of heating load. Daily means would smooth out the morning and evening peaks that determine peak demand and bill impact.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>What's in it</h3>
+      <p><span class="tagline">variable</span> 2 metre air temperature at hourly resolution. Temperature alone explains the bulk of heating variance once SAP and occupancy are known.</p>
+      <p><span class="tagline">spatial</span> 20 grid points on a 0.1° lattice across the city. Each dwelling is matched to its nearest point by haversine distance, so coastal and inner-city dwellings see different forcings.</p>
+      <p><span class="tagline">coverage</span> 2020 to 2039, roughly 3.5M hourly rows per scenario. The horizon is set by the policy outputs we care about (2030 net-zero milestones, 2035 boiler ban, 2040 grid decarbonisation).</p>
+      <p><span class="tagline">historical</span> ERA5 reanalysis from ECMWF Copernicus CDS for the 2020 to 2022 backcast used in calibration and validation.</p>
+      <p><span class="tagline">forward</span> Climate-DT digital-twin projections from Destination Earth, three SSP3-7.0 realisations (ICON, IFS-FESOM, IFS-NEMO). The three-model envelope is what gives us climate uncertainty bands on the demand forecast.</p>
+    </div>
+    <div class="card" style="padding:0">
+      <div class="controls" style="padding:12px 12px 0">
+        <button class="pill on" data-clim="year">Seasonal cycle</button>
+        <button class="pill" data-clim="winter">Winter week</button>
+        <button class="pill" data-clim="summer">Summer week</button>
+      </div>
+      <div class="chartwrap"><canvas id="climateChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="figcard" style="padding:0;margin-top:18px">
+    <iframe src="abm_demo_assets/household_coverage_map.html" loading="lazy"
+            style="width:100%;height:580px;border:0;display:block;background:#fff"
+            title="Household coverage map, matched 2m temperature for a cold winter day"></iframe>
+    <div class="cap">134,503 dwellings, each coloured by the 2m air temperature of its matched ERA5 grid point on 12 December 2022. The colour gradient shows which dwellings sit in the city's coldest pockets. Those are the same households the policy module flags first.</div>
+  </div>
+</section>
+
+<section class="step" id="synthpop">
+  <div class="step-tag">03 · Synthetic population</div>
+  <h1 class="step-title">Synthetic population</h1>
+  <p class="lede">The physical stock comes from the EPC register. Residents come from HIDP, a synthetic population derived from Understanding Society and matched to UPRNs. Every dwelling carries a coherent set of physical and social attributes.</p>
+
+  <div class="grid-4" style="margin-bottom:16px">
+    <div class="hero"><div class="v">97,714</div><div class="l">Dwellings, every UPRN in city</div></div>
+    <div class="hero"><div class="v">185 <small>LSOA</small></div><div class="l">41 wards, full geographic coverage</div></div>
+    <div class="hero"><div class="v">68 <small>SAP</small></div><div class="l">Mean efficiency, 85 m² median floor</div></div>
+    <div class="hero"><div class="v">86%</div><div class="l">On mains gas, 12% off-gas</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Dwellings, EPC</h3>
+      <p><span class="tagline">UPRN</span> unique property reference, geocoded</p>
+      <p><span class="tagline">type</span> 31% flats, 32% semis, 26% terraces, 9% detached</p>
+      <p><span class="tagline">m²</span> floor area, 35 to 200+ m²</p>
+      <p><span class="tagline">SAP</span> efficiency score 1 to 100, 1,200 dwellings below 40</p>
+      <p><span class="tagline">age</span> 23% pre-1930, 30% interwar, 32% 1950s to 80s, 16% post-1995</p>
+      <p><span class="tagline">fuel</span> 86% mains gas, 11% electric, the rest off-grid</p>
+    </div>
+    <div class="card">
+      <h3>Residents, HIDP</h3>
+      <p><span class="tagline">n</span> household size and children present</p>
+      <p><span class="tagline">income</span> income band, used for adoption and bill burden</p>
+      <p><span class="tagline">edu</span> highest qualification in the household</p>
+      <p><span class="tagline">tenure</span> owner, private rent, social rent</p>
+      <p><span class="tagline">schedule</span> dual-earner, retired, student, lone parent. Drives the hourly occupancy pattern.</p>
+    </div>
+  </div>
+
+  <div style="margin-top:18px">
+    <div class="controls">
+      <button class="pill on" data-spop="spatial">Spatial map</button>
+      <button class="pill" data-spop="attributes">Dwelling attributes</button>
+      <button class="pill" data-spop="dwelling_size">Dwelling type &amp; size</button>
+    </div>
+    <div class="figcard" id="spopSpatialCard" style="padding:0">
+      <iframe src="abm_demo_assets/synth_pop_map.html" loading="lazy"
+              style="width:100%;height:560px;border:0;display:block;background:#FAFAF8"
+              title="Synthetic population map, SAP efficiency by dwelling"></iframe>
+      <div class="cap">A 30,000-dwelling sample. Use the buttons above the map to switch between SAP efficiency, tenure, household income band, and construction era. The four views share the same dwellings, so the geographic structure stays put while the meaning shifts.</div>
+    </div>
+    <div class="figcard" id="spopStaticCard" style="display:none">
+      <img id="spopImg" src="abm_demo_assets/synth_pop_attributes.png" alt="">
+      <div class="cap" id="spopCap">Distribution of dwelling attributes across the synthetic population.</div>
+    </div>
+  </div>
+</section>
+
+<section class="step" id="agents">
+  <div class="step-tag">04 · Agent logic</div>
+  <h1 class="step-title">Agent logic</h1>
+  <p class="lede">Every simulation tick is one hour. Each dwelling updates its occupants, computes its baseline and climate-driven heating components, and records hourly kWh. Move the levers and the house on the right responds as the equation lands.</p>
+
+  <div class="grid-2a">
+    <div class="agentbox">
+      <h4>Recompute demand live</h4>
+      <div class="slider-row">
+        <label>Outdoor temperature</label>
+        <input type="range" id="aT" min="-10" max="30" step="0.5" value="-2">
+        <span class="val" id="aTv">−2 °C</span>
+      </div>
+      <div class="slider-row">
+        <label>SAP rating</label>
+        <input type="range" id="aSAP" min="20" max="95" step="1" value="55">
+        <span class="val" id="aSAPv">55</span>
+      </div>
+      <div class="slider-row">
+        <label>Floor area</label>
+        <input type="range" id="aArea" min="35" max="200" step="5" value="85">
+        <span class="val" id="aAreav">85 m²</span>
+      </div>
+      <div class="slider-row">
+        <label>Residents at home</label>
+        <input type="range" id="aOcc" min="0" max="4" step="1" value="2">
+        <span class="val" id="aOccv">2</span>
+      </div>
+      <div class="slider-row">
+        <label>Wealth band</label>
+        <select id="aWealth" class="pill" style="cursor:pointer">
+          <option value="0.75">Low (−25%)</option>
+          <option value="1.0" selected>Medium</option>
+          <option value="1.3">High (+30%)</option>
+        </select>
+        <span class="val">&nbsp;</span>
+      </div>
+
+      <div class="agent-result">
+        <div class="rblock"><div class="rl">Baseline</div><div class="rv" id="rBase">0.42<span class="ru">kWh/h</span></div></div>
+        <div class="rblock"><div class="rl">Occupancy</div><div class="rv" id="rOcc">0.10<span class="ru">kWh/h</span></div></div>
+        <div class="rblock"><div class="rl">Heating</div><div class="rv" id="rHeat">2.80<span class="ru">kWh/h</span></div></div>
+      </div>
+      <div class="rblock total-card" style="margin-top:8px;padding:11px"><div class="rl">Total this hour</div><div class="rv" id="rTot">3.32<span class="ru">kWh</span></div></div>
+
+      <div class="eqn" style="margin-top:12px;font-size:11.5px">
+        heating = <span class="v">k</span> · max(0, <span class="v">T_set</span> − <span class="v">T_out</span> − db) · <span class="v">sap</span> · <span class="v">area</span> · <span class="v">occ</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="house-stage" id="houseStage">
+        <div class="badge" id="houseBadge">−2 °C · winter</div>
+        <svg viewBox="0 0 500 300" xmlns="http://www.w3.org/2000/svg" id="houseSvg" preserveAspectRatio="xMidYMid meet">
+          <g id="sunGroup" opacity="0">
+            <circle cx="420" cy="55" r="22" fill="#f7c873"/>
+            <g stroke="#f7c873" stroke-width="3" stroke-linecap="round">
+              <line x1="420" y1="20" x2="420" y2="10"/>
+              <line x1="420" y1="100" x2="420" y2="90"/>
+              <line x1="385" y1="55" x2="375" y2="55"/>
+              <line x1="465" y1="55" x2="455" y2="55"/>
+              <line x1="395" y1="30" x2="388" y2="23"/>
+              <line x1="452" y1="80" x2="445" y2="73"/>
+              <line x1="395" y1="80" x2="388" y2="87"/>
+              <line x1="452" y1="30" x2="445" y2="37"/>
+            </g>
+          </g>
+          <g id="snowGroup" opacity="0">
+            <g class="snow" style="animation-delay:0s"><circle cx="60" cy="20" r="2.5" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:.4s"><circle cx="120" cy="10" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:.9s"><circle cx="200" cy="0" r="3" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:1.4s"><circle cx="280" cy="15" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:.2s"><circle cx="340" cy="5" r="2.5" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:1.7s"><circle cx="400" cy="20" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:1.1s"><circle cx="90" cy="0" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:2.0s"><circle cx="160" cy="25" r="2.5" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:.6s"><circle cx="250" cy="10" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:2.4s"><circle cx="370" cy="5" r="3" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:1.3s"><circle cx="440" cy="15" r="2" fill="#fff"/></g>
+            <g class="snow" style="animation-delay:1.8s"><circle cx="30" cy="5" r="2" fill="#fff"/></g>
+          </g>
+
+          <g id="houseBody" transform="translate(150,90)">
+            <polygon points="-10,40 100,-25 210,40" fill="#7a4a2f" stroke="#5a3320" stroke-width="1.5"/>
+            <rect x="155" y="-10" width="18" height="32" fill="#8b5a3c" stroke="#5a3320" stroke-width="1.2"/>
+            <g id="smokeGroup" opacity="0">
+              <circle class="smoke" style="animation-delay:0s" cx="164" cy="-12" r="5" fill="#cbcbcb"/>
+              <circle class="smoke" style="animation-delay:1s" cx="164" cy="-12" r="6" fill="#d8d8d8"/>
+              <circle class="smoke" style="animation-delay:2s" cx="164" cy="-12" r="4" fill="#bdbdbd"/>
+            </g>
+            <rect x="-5" y="40" width="210" height="125" fill="#e8d6b8" stroke="#9a7e58" stroke-width="1.5"/>
+            <rect id="winL" x="20" y="65" width="48" height="48" fill="#bcd0e2" stroke="#5a3320" stroke-width="2"/>
+            <line x1="44" y1="65" x2="44" y2="113" stroke="#5a3320" stroke-width="1.5"/>
+            <line x1="20" y1="89" x2="68" y2="89" stroke="#5a3320" stroke-width="1.5"/>
+            <rect id="winR" x="132" y="65" width="48" height="48" fill="#bcd0e2" stroke="#5a3320" stroke-width="2"/>
+            <line x1="156" y1="65" x2="156" y2="113" stroke="#5a3320" stroke-width="1.5"/>
+            <line x1="132" y1="89" x2="180" y2="89" stroke="#5a3320" stroke-width="1.5"/>
+            <rect x="88" y="105" width="24" height="60" fill="#7a4a2f" stroke="#5a3320" stroke-width="1.5"/>
+            <circle cx="106" cy="135" r="1.5" fill="#f4d35e"/>
+
+            <g id="p1" opacity="0" transform="translate(34,80)">
+              <circle cx="0" cy="0" r="6" fill="#3b6997"/>
+              <rect x="-4" y="6" width="8" height="12" fill="#3b6997"/>
+            </g>
+            <g id="p2" opacity="0" transform="translate(54,80)">
+              <circle cx="0" cy="0" r="6" fill="#a64a4a"/>
+              <rect x="-4" y="6" width="8" height="12" fill="#a64a4a"/>
+            </g>
+            <g id="p3" opacity="0" transform="translate(146,80)">
+              <circle cx="0" cy="0" r="6" fill="#3b6997"/>
+              <rect x="-4" y="6" width="8" height="12" fill="#3b6997"/>
+            </g>
+            <g id="p4" opacity="0" transform="translate(166,80)">
+              <circle cx="0" cy="0" r="5" fill="#5b8c4a"/>
+              <rect x="-3.5" y="5" width="7" height="10" fill="#5b8c4a"/>
+            </g>
+
+            <rect id="glowL" class="glow" x="14" y="59" width="60" height="60" fill="none" stroke="#ff8b3a" stroke-width="3" opacity="0" rx="3"/>
+            <rect id="glowR" class="glow" x="126" y="59" width="60" height="60" fill="none" stroke="#ff8b3a" stroke-width="3" opacity="0" rx="3"/>
+
+            <!-- Radiator under right window -->
+            <g id="radiator" opacity="0.85">
+              <rect x="130" y="135" width="50" height="20" fill="#d8d6d2" stroke="#7a7570" stroke-width="1" rx="2"/>
+              <line x1="138" y1="136" x2="138" y2="154" stroke="#7a7570" stroke-width="0.8"/>
+              <line x1="146" y1="136" x2="146" y2="154" stroke="#7a7570" stroke-width="0.8"/>
+              <line x1="154" y1="136" x2="154" y2="154" stroke="#7a7570" stroke-width="0.8"/>
+              <line x1="162" y1="136" x2="162" y2="154" stroke="#7a7570" stroke-width="0.8"/>
+              <line x1="170" y1="136" x2="170" y2="154" stroke="#7a7570" stroke-width="0.8"/>
+              <g id="heatLines" opacity="0">
+                <path d="M 140 132 Q 142 126 140 120 Q 138 114 140 108" stroke="#ff8b3a" stroke-width="1.4" fill="none" opacity="0.75"/>
+                <path d="M 155 132 Q 157 126 155 120 Q 153 114 155 108" stroke="#ff8b3a" stroke-width="1.4" fill="none" opacity="0.75"/>
+                <path d="M 170 132 Q 172 126 170 120 Q 168 114 170 108" stroke="#ff8b3a" stroke-width="1.4" fill="none" opacity="0.75"/>
+              </g>
+              <rect id="radGlow" class="glow" x="128" y="133" width="54" height="24" fill="none" stroke="#ff8b3a" stroke-width="2.5" opacity="0" rx="3"/>
+            </g>
+          </g>
+
+          <g id="thermo" transform="translate(35,95)">
+            <rect x="0" y="0" width="14" height="100" rx="6" fill="#fff" stroke="#5C5C5C" stroke-width="1"/>
+            <rect id="thermoFill" x="3" y="60" width="8" height="36" rx="3" fill="#E8521A"/>
+            <circle cx="7" cy="100" r="9" fill="#E8521A" stroke="#5C5C5C" stroke-width="1"/>
+            <text x="22" y="14" font-family="Calibri" font-size="10" fill="#5C5C5C">30°</text>
+            <text x="22" y="55" font-family="Calibri" font-size="10" fill="#5C5C5C">10°</text>
+            <text x="22" y="96" font-family="Calibri" font-size="10" fill="#5C5C5C">−10°</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="grid-3" style="margin-top:12px">
+        <div class="card" style="padding:11px"><h3 style="font-size:12px;margin:0 0 3px">Occupancy</h3><p style="font-size:11.5px;margin:0">PersonAgent adds ≈ 0.06 kWh/h when home, ~0.01 standby when away.</p></div>
+        <div class="card" style="padding:11px"><h3 style="font-size:12px;margin:0 0 3px">Baseline</h3><p style="font-size:11.5px;margin:0">Fixed 0.4 kWh/h appliance load, weakly scaled by area.</p></div>
+        <div class="card" style="padding:11px"><h3 style="font-size:12px;margin:0 0 3px">Heating</h3><p style="font-size:11.5px;margin:0">Activates below 18.5 °C, scales by SAP, area, occupancy.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="step" id="smoke">
+  <div class="step-tag">05 · Smoke test</div>
+  <h1 class="step-title">Smoke test</h1>
+  <p class="lede">Seven days, 1,200 dwellings, hourly. Small enough to iterate, large enough to expose the daily and seasonal signal.</p>
+
+  <div class="controls">
+    <button class="pill on" data-smoke="winter">Winter week</button>
+    <button class="pill" data-smoke="summer">Summer week</button>
+    <span style="flex:1"></span>
+    <button class="pill on" data-bd="total">Total</button>
+    <button class="pill" data-bd="type">By property type</button>
+    <button class="pill" data-bd="wealth">By wealth</button>
+    <button class="pill on" data-tmp="on">Overlay temp</button>
+  </div>
+
+  <div class="figcard" style="padding:0">
+    <div class="chartwrap" style="height:440px"><canvas id="smokeChart"></canvas></div>
+    <div class="cap" id="smokeCap">Winter week (15 to 22 Jan 2021). Sub-zero outdoor temperatures drive sustained heating; the daily occupancy cycle creates the morning and evening peaks.</div>
+  </div>
+
+  <div class="grid-3" style="margin-top:14px">
+    <div class="hero"><div class="v">~5,000</div><div class="l">Peak kWh/h, coldest winter hour</div></div>
+    <div class="hero"><div class="v">~800</div><div class="l">Summer baseline kWh/h</div></div>
+    <div class="hero"><div class="v">6×</div><div class="l">Winter to summer amplitude</div></div>
+  </div>
+</section>
+
+<section class="step" id="animation">
+  <div class="step-tag">06 · Neighbourhood animation</div>
+  <h1 class="step-title">Neighbourhood animation</h1>
+  <p class="lede">One LSOA, 1,029 dwellings, two weeks in November 2024 that swing from -2°C to +14°C. Dot size is how many residents are home. Colour is the demand the dwelling is drawing. The background tints with outdoor temperature, cool blue when it's cold, warm peach when it's mild. People come and go, the weather shifts, the demand follows.</p>
+
+  <div class="figcard" style="padding:0">
+    <iframe src="abm_demo_assets/lsoa_animation.html" loading="lazy"
+            style="width:100%;height:660px;border:0;display:block;background:#FAFAF8"
+            title="LSOA E01008358, hourly occupancy and demand"></iframe>
+    <div class="cap">Hover any dwelling for its property type, SAP, floor area, occupants present, and current draw. Scrub the timeline below the map to step hour by hour, or hit Play.</div>
+  </div>
+</section>
+
+<section class="step" id="calibration">
+  <div class="step-tag">07 · Calibration</div>
+  <h1 class="step-title">Calibration</h1>
+  <p class="lede">Parameters without a direct empirical anchor (baseline draw, person-load constant, area exponent, schedule modifiers) are fit against SERL intraday profiles by sequential Monte-Carlo, with the DESNZ annual total as a soft constraint.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>What gets calibrated</h3>
+      <p><span class="tagline">baseline_anchor</span> hourly non-climate appliance draw</p>
+      <p><span class="tagline">person_kwh_h</span> per-person occupancy load</p>
+      <p><span class="tagline">area_exponent</span> sublinear floor-area scaling</p>
+      <p><span class="tagline">asleep_factor</span> overnight occupancy reduction</p>
+      <p><span class="tagline">wealth_modifiers</span> ±25 to 30% by income band</p>
+      <p><span class="tagline">heating_k</span> SAP-to-sensitivity slope</p>
+    </div>
+    <div class="card">
+      <h3>How the fit works</h3>
+      <p>SMC samples 600 candidate parameter sets from plausibility-bounded priors, scores each on SERL intraday RMSE × DESNZ annual MAPE, keeps the top decile, and resamples around them. Three rounds.</p>
+      <p style="font-size:11.5px;color:var(--ink-3);margin-top:6px">Fit holds out 2022 as the test year. Parameters are frozen before scenario analysis.</p>
+    </div>
+  </div>
+
+  <h3 style="font-family:var(--display);font-size:13px;color:var(--ink);margin:20px 0 8px">Calibrated monthly ratio, ABM over SERL</h3>
+  <div class="figcard">
+    <img src="abm_demo_assets/calib_monthly_ratio.png" alt="ABM-to-SERL monthly ratios after calibration">
+    <div class="cap">Green = within ±10%, orange = within ±25%, red = outside. Gas-heated homes sit in-band for most of the year; the April / October shoulder months remain the hardest to fit and frame the next round of work.</div>
+  </div>
+</section>
+
+<section class="step" id="validation">
+  <div class="step-tag">08 · Validation</div>
+  <h1 class="step-title">Validation</h1>
+  <p class="lede">Annual totals against DESNZ official statistics; intraday shape against the SERL smart-meter panel. Both have to hold.</p>
+
+  <div class="grid-3" style="margin-bottom:14px">
+    <div class="hero"><div class="v">16.0%</div><div class="l">Total energy MAPE</div></div>
+    <div class="hero"><div class="v">14.3%</div><div class="l">Electricity MAPE</div></div>
+    <div class="hero"><div class="v">18.6%</div><div class="l">Gas MAPE</div></div>
+  </div>
+
+  <h3 style="font-family:var(--display);font-size:13px;color:var(--ink);margin:12px 0 8px">Annual totals against DESNZ</h3>
+  <div class="grid-2" style="gap:14px">
+    <div class="figcard" style="padding:0">
+      <div class="chartwrap" style="height:260px"><canvas id="desnzTotalsChart"></canvas></div>
+      <div class="cap">ABM total annual demand against DESNZ sub-national statistics, per-dwelling kWh. The model tracks inter-annual variation correctly (2021 cold winter peak, 2022 warmer year).</div>
+    </div>
+    <div class="figcard" style="padding:0">
+      <div class="chartwrap" style="height:260px"><canvas id="desnzErrorChart"></canvas></div>
+      <div class="cap">Signed percentage error. Negative across the board because DESNZ figures include some non-domestic meters that the model excludes, producing a small conservative bias.</div>
+    </div>
+  </div>
+
+  <h3 style="font-family:var(--display);font-size:13px;color:var(--ink);margin:24px 0 8px">Intraday shape against the SERL envelope</h3>
+  <div class="figcard">
+    <img src="abm_demo_assets/serl_profiles.png" alt="ABM mean hourly profile against SERL envelope">
+    <div class="cap">ABM mean hourly profile (solid) over the SERL min to max envelope (shaded), by month and heating fuel.</div>
+  </div>
+</section>
+
+<section class="step" id="scenarios">
+  <div class="step-tag">09 · Policy scenarios</div>
+  <h1 class="step-title">Policy scenarios</h1>
+  <p class="lede">Both scenarios deploy heat pumps. The difference is who gets one. Targeting logic shapes programme performance as much as the intervention itself.</p>
+
+  <div class="grid-2">
+    <div class="card" style="border-top:3px solid var(--accent)">
+      <h3>hp_social_rent</h3>
+      <p><strong>Targets social-rent tenure.</strong> 50% uptake in cohort. Easier delivery through portfolio landlords; addresses fuel poverty directly.</p>
+      <p style="font-size:11px;color:var(--ink-3);margin-top:6px">Eligible: 23,540 · Adopters: 11,770</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--dark)">
+      <h3>hp_top_users</h3>
+      <p><strong>Targets the top 10% consumers.</strong> 20% uptake, regardless of tenure. Higher per-dwelling impact; harder to coordinate.</p>
+      <p style="font-size:11px;color:var(--ink-3);margin-top:6px">Eligible: 9,771 · Adopters: 1,954</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>The aggregate vs equity trade-off</h3>
+    <p style="font-size:12.5px;color:var(--ink-2);margin:4px 0 12px;line-height:1.5">Same model, same intervention, same year. The bars below flip depending on which question you ask.</p>
+
+    <div class="slider-row" style="margin:0 0 14px">
+      <label>Electricity tariff</label>
+      <input type="range" id="tariff" min="18" max="35" step="0.5" value="24">
+      <span class="val" id="tariffv">24.0 p/kWh</span>
+    </div>
+
+    <div class="tradeoff-grid">
+      <div class="tradeoff-panel">
+        <div class="tradeoff-label">A · System-level impact</div>
+        <div class="chartwrap" style="height:170px;padding:6px 6px 0"><canvas id="scTotalChart"></canvas></div>
+        <div class="tradeoff-cap">Total saving per year across the city</div>
+      </div>
+
+      <div class="tradeoff-callout">
+        <div class="tradeoff-callout-v">67<small>%</small></div>
+        <div class="tradeoff-callout-l">more aggregate demand reduction under <strong>social-rent</strong> targeting<br><span style="color:var(--ink-3)">44.8 vs 26.9 GWh/yr</span></div>
+        <div class="tradeoff-divider"></div>
+        <div class="tradeoff-callout-v" style="color:var(--dark)">3.6<small>×</small></div>
+        <div class="tradeoff-callout-l">higher saving per household under <strong>top-user</strong> targeting<br><span style="color:var(--ink-3)" id="perAdopterDelta">£3,305 vs £915 per adopter</span></div>
+      </div>
+
+      <div class="tradeoff-panel">
+        <div class="tradeoff-label">B · Per-household payoff</div>
+        <div class="chartwrap" style="height:170px;padding:6px 6px 0"><canvas id="scPerAdopterChart"></canvas></div>
+        <div class="tradeoff-cap">Mean annual bill saving per adopting household</div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--rule)">
+      <div class="grid-2" style="gap:18px;align-items:start">
+        <div>
+          <h3 style="margin:0 0 4px;font-family:var(--display);font-size:13.5px;color:var(--ink)">C · How long until the heat pump pays for itself?</h3>
+          <p style="font-size:12px;color:var(--ink-2);margin:0 0 10px;line-height:1.5">Years to recover the net installation cost at the current tariff. Top-user adopters reach payback fast. Social-rent reaches more households, so the city-wide ledger looks different even if each household waits longer.</p>
+          <div class="slider-row" style="margin:0">
+            <label>Net install cost</label>
+            <input type="range" id="hpCost" min="3000" max="18000" step="250" value="10000">
+            <span class="val" id="hpCostv">£10,000</span>
+          </div>
+          <div class="agent-result" style="grid-template-columns:1fr 1fr;margin-top:12px">
+            <div class="rblock" style="background:#fde9df;border-color:var(--accent-soft)">
+              <div class="rl">Social-rent payback</div>
+              <div class="rv" id="payback-soc" style="color:var(--accent)">10.9<span class="ru">years</span></div>
+              <div style="font-size:11px;color:var(--ink-3);margin-top:4px" id="payback-soc-sub">at 24p · £915/yr saved</div>
+            </div>
+            <div class="rblock" style="background:#eaeae9;border-color:#5C5C5C">
+              <div class="rl">Top-user payback</div>
+              <div class="rv" id="payback-top" style="color:var(--dark)">3.0<span class="ru">years</span></div>
+              <div style="font-size:11px;color:var(--ink-3);margin-top:4px" id="payback-top-sub">at 24p · £3,305/yr saved</div>
+            </div>
+          </div>
+        </div>
+        <div class="figcard" style="padding:0">
+          <div class="chartwrap" style="height:230px;padding:8px 8px 0"><canvas id="paybackChart"></canvas></div>
+          <div class="cap">Payback period (years) vs electricity tariff. Steeper tariff → faster recovery. Drag the tariff slider above to see the curves meet your assumption.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="peach" style="margin-top:14px">Either help <strong>more people</strong> or save <strong>more energy</strong>, but not both. Social-rent targeting reaches 11,770 households at modest per-home gains. Top-user targeting reaches 1,951 households at much larger per-home gains. The choice depends on the objective.</div>
+</section>
+
+<section class="step" id="spatial">
+  <div class="step-tag">10 · Spatial impact</div>
+  <h1 class="step-title">Spatial impact</h1>
+  <p class="lede">Every adopting dwelling, mapped. Use the dropdown in the top-right of the map to switch scenarios; zoom and click any house for its baseline, policy, and saving in kWh.</p>
+
+  <div class="figcard" style="padding:0">
+    <iframe id="folium-frame" src="abm_demo_assets/scenario_comparison_map.html" loading="lazy"
+            style="width:100%;height:640px;border:0;display:block;background:#fff" title="Per-dwelling scenario comparison map"></iframe>
+    <div class="cap">Per-dwelling baseline vs. policy comparison across Newcastle. 97,714 dwellings rendered; scenario toggle in the top-right of the map.</div>
+  </div>
+
+  <div class="grid-2" style="margin-top:14px">
+    <div class="card">
+      <h3>hp_social_rent, concentrated</h3>
+      <p>Savings cluster in specific wards where social housing is concentrated, particularly the estate developments in the east and west.</p>
+    </div>
+    <div class="card">
+      <h3>hp_top_users, diffuse</h3>
+      <p>Savings spread evenly across the city, with modest hotspots in areas of older detached and semi-detached stock in the outer suburbs.</p>
+    </div>
+  </div>
+</section>
+
+<section class="step" id="credits">
+  <div class="step-tag">11 · Credits</div>
+  <h1 class="step-title">Thank you</h1>
+  <p class="lede">Questions, ideas, collaborations: get in touch.</p>
+
+  <div class="grid-2" style="align-items:stretch;margin-bottom:14px">
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center">
+      <h3>Project authors</h3>
+      <p style="font-size:14px;line-height:1.75;color:var(--ink)">Alejandro Beltran<br>Matthew Tipuric<br>Nicholas Malleson<br>David Wagg<br>Daniel Arribas-Bel<br>Kelin Yue</p>
+      <p style="font-size:11.5px;color:var(--ink-3);margin-top:8px;line-height:1.55">The Alan Turing Institute · University of Sheffield · University of Leeds · University of Liverpool</p>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center">
+      <h3>Contact &amp; resources</h3>
+      <p style="font-size:13.5px;line-height:1.75"><span class="tagline">email</span> <a href="mailto:abeltran@turing.ac.uk" style="color:var(--accent);text-decoration:none;font-weight:600">abeltran@turing.ac.uk</a></p>
+      <p style="font-size:13.5px;line-height:1.75"><span class="tagline">project</span> <a href="https://www.turing.ac.uk/research/research-projects/earth-observation-informed-agent-based-models-scenario-planning-digital" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600">Scenario Planning Digital Twin · Alan Turing Institute</a></p>
+      <p style="font-size:13.5px;line-height:1.75"><span class="tagline">code</span> <code style="background:var(--bg-alt);padding:2px 8px;border-radius:3px;font-size:11.5px">spdt_abm/</code></p>
+    </div>
+  </div>
+
+  <a href="https://www.turing.ac.uk/research/research-projects/earth-observation-informed-agent-based-models-scenario-planning-digital" target="_blank" rel="noopener" style="text-decoration:none;display:block">
+    <div class="figcard" style="padding:0;position:relative;cursor:pointer;transition:transform .15s ease" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      <img id="turing-shot" src="abm_demo_assets/turing_project_page.png" alt="Alan Turing Institute project page"
+           onerror="this.style.display='none';document.getElementById('turing-fallback').style.display='flex'"
+           style="width:100%;display:block">
+      <div id="turing-fallback" style="display:none;height:480px;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:30px;background:var(--bg-alt)">
+        <div style="font-family:var(--display);font-size:18px;color:var(--ink);font-weight:700;margin-bottom:8px">Alan Turing Institute · Project page</div>
+        <p style="color:var(--ink-2);max-width:520px;line-height:1.6;font-size:13.5px;margin:0 0 14px">Earth observation-informed agent-based models for scenario planning digital twins.</p>
+        <span style="background:var(--accent);color:#fff;padding:9px 18px;border-radius:4px;font-weight:600;font-size:13px">Open project page →</span>
+      </div>
+      <div class="cap">Click to open at turing.ac.uk</div>
+    </div>
+  </a>
+</section>
+
+<div class="stepnav">
+  <button class="stepbtn" id="prevBtn">← Previous</button>
+  <div style="color:var(--ink-3);font-size:11.5px;font-family:var(--body)" id="stepCount">Step 1 of 11</div>
+  <button class="stepbtn" id="nextBtn">Next →</button>
+</div>
+</main>
+
+<script>
+const SMOKE = {"winter":[{"t":1,"ts":"2021-01-15 01:00:00+00:00","temp":-1.83,"total":2667.1,"mt":550.9,"sd":708.8,"det":312.4,"et":225.4,"flat":869.5,"hi":78.6,"md":62.0,"lo":48.6},{"t":2,"ts":"2021-01-15 02:00:00+00:00","temp":-2.76,"total":2738.0,"mt":565.7,"sd":728.1,"det":321.0,"et":231.6,"flat":891.7,"hi":78.6,"md":62.0,"lo":48.6},{"t":3,"ts":"2021-01-15 03:00:00+00:00","temp":-3.16,"total":2768.7,"mt":572.1,"sd":735.4,"det":324.3,"et":233.8,"flat":903.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":4,"ts":"2021-01-15 04:00:00+00:00","temp":-3.4,"total":2786.3,"mt":575.8,"sd":740.0,"det":326.2,"et":235.3,"flat":909.0,"hi":78.6,"md":62.0,"lo":48.6},{"t":5,"ts":"2021-01-15 05:00:00+00:00","temp":-4.22,"total":2842.3,"mt":587.9,"sd":754.1,"det":332.6,"et":239.6,"flat":928.2,"hi":76.5,"md":60.3,"lo":47.5},{"t":6,"ts":"2021-01-15 06:00:00+00:00","temp":-5.01,"total":2895.5,"mt":599.2,"sd":767.9,"det":338.7,"et":243.5,"flat":946.2,"hi":74.3,"md":58.9,"lo":46.6},{"t":7,"ts":"2021-01-15 07:00:00+00:00","temp":-5.5,"total":2923.9,"mt":605.1,"sd":775.1,"det":342.2,"et":245.8,"flat":955.7,"hi":71.5,"md":56.0,"lo":45.2},{"t":8,"ts":"2021-01-15 08:00:00+00:00","temp":-4.79,"total":2756.1,"mt":568.7,"sd":731.9,"det":323.8,"et":229.4,"flat":902.4,"hi":56.7,"md":45.1,"lo":36.7},{"t":9,"ts":"2021-01-15 09:00:00+00:00","temp":-4.59,"total":2516.1,"mt":514.7,"sd":676.9,"det":290.8,"et":211.3,"flat":822.3,"hi":41.9,"md":33.1,"lo":28.2},{"t":10,"ts":"2021-01-15 10:00:00+00:00","temp":-4.63,"total":2140.0,"mt":440.1,"sd":571.8,"det":235.0,"et":187.9,"flat":705.2,"hi":28.2,"md":22.4,"lo":20.5},{"t":11,"ts":"2021-01-15 11:00:00+00:00","temp":-3.63,"total":2004.6,"mt":414.2,"sd":543.2,"det":223.5,"et":172.9,"flat":650.8,"hi":25.1,"md":20.5,"lo":18.7},{"t":12,"ts":"2021-01-15 12:00:00+00:00","temp":-2.59,"total":1918.3,"mt":398.2,"sd":516.2,"det":215.4,"et":165.1,"flat":623.4,"hi":23.7,"md":19.5,"lo":18.1},{"t":13,"ts":"2021-01-15 13:00:00+00:00","temp":-1.49,"total":1820.0,"mt":380.3,"sd":496.8,"det":204.5,"et":155.1,"flat":583.3,"hi":22.8,"md":18.7,"lo":17.2},{"t":14,"ts":"2021-01-15 14:00:00+00:00","temp":-0.61,"total":1996.0,"mt":416.0,"sd":552.0,"det":238.5,"et":176.1,"flat":613.5,"hi":30.1,"md":25.1,"lo":21.9},{"t":15,"ts":"2021-01-15 15:00:00+00:00","temp":-0.3,"total":2140.9,"mt":440.3,"sd":590.9,"det":253.8,"et":187.7,"flat":668.3,"hi":39.2,"md":31.2,"lo":26.2},{"t":16,"ts":"2021-01-15 16:00:00+00:00","temp":-0.69,"total":2359.5,"mt":487.7,"sd":636.1,"det":278.6,"et":199.6,"flat":757.4,"hi":54.7,"md":43.9,"lo":35.5},{"t":17,"ts":"2021-01-15 17:00:00+00:00","temp":-1.66,"total":2549.4,"mt":526.3,"sd":680.4,"det":302.1,"et":214.4,"flat":826.2,"hi":64.7,"md":50.5,"lo":40.6},{"t":18,"ts":"2021-01-15 18:00:00+00:00","temp":-2.61,"total":2706.9,"mt":559.0,"sd":719.3,"det":318.0,"et":228.3,"flat":882.2,"hi":72.3,"md":57.9,"lo":44.8},{"t":19,"ts":"2021-01-15 19:00:00+00:00","temp":-3.28,"total":2764.1,"mt":571.9,"sd":733.6,"det":323.8,"et":232.6,"flat":902.2,"hi":72.5,"md":58.1,"lo":45.0},{"t":20,"ts":"2021-01-15 20:00:00+00:00","temp":-2.58,"total":2715.7,"mt":561.7,"sd":720.2,"det":317.7,"et":228.6,"flat":887.5,"hi":74.4,"md":59.4,"lo":46.2},{"t":21,"ts":"2021-01-15 21:00:00+00:00","temp":-2.34,"total":2702.6,"mt":558.6,"sd":716.7,"det":315.7,"et":227.6,"flat":884.0,"hi":76.4,"md":61.0,"lo":47.6},{"t":22,"ts":"2021-01-15 22:00:00+00:00","temp":-1.92,"total":2674.2,"mt":552.5,"sd":708.8,"det":312.2,"et":225.4,"flat":875.4,"hi":78.6,"md":62.0,"lo":48.6},{"t":23,"ts":"2021-01-15 23:00:00+00:00","temp":-1.56,"total":2646.8,"mt":546.7,"sd":701.5,"det":308.9,"et":223.1,"flat":866.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":24,"ts":"2021-01-16 00:00:00+00:00","temp":-1.11,"total":2611.4,"mt":539.3,"sd":692.1,"det":304.8,"et":220.1,"flat":855.2,"hi":78.6,"md":62.0,"lo":48.6},{"t":25,"ts":"2021-01-16 01:00:00+00:00","temp":-0.72,"total":2580.9,"mt":532.9,"sd":684.0,"det":301.2,"et":217.5,"flat":845.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":26,"ts":"2021-01-16 02:00:00+00:00","temp":-0.65,"total":2575.1,"mt":531.7,"sd":682.5,"det":300.5,"et":217.0,"flat":843.4,"hi":78.6,"md":62.0,"lo":48.6},{"t":27,"ts":"2021-01-16 03:00:00+00:00","temp":-0.41,"total":2556.0,"mt":527.7,"sd":677.3,"det":298.2,"et":215.4,"flat":837.4,"hi":78.6,"md":62.0,"lo":48.6},{"t":28,"ts":"2021-01-16 04:00:00+00:00","temp":0.07,"total":2517.2,"mt":519.6,"sd":666.8,"det":293.5,"et":212.1,"flat":825.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":29,"ts":"2021-01-16 05:00:00+00:00","temp":0.64,"total":2465.8,"mt":509.2,"sd":652.9,"det":287.6,"et":207.5,"flat":808.7,"hi":76.5,"md":60.3,"lo":47.5},{"t":30,"ts":"2021-01-16 06:00:00+00:00","temp":1.1,"total":2423.8,"mt":500.7,"sd":641.7,"det":282.7,"et":203.4,"flat":795.3,"hi":74.3,"md":58.9,"lo":46.6},{"t":31,"ts":"2021-01-16 07:00:00+00:00","temp":1.51,"total":2382.3,"mt":491.8,"sd":630.8,"det":278.2,"et":200.0,"flat":781.4,"hi":71.5,"md":56.0,"lo":45.2},{"t":32,"ts":"2021-01-16 08:00:00+00:00","temp":1.77,"total":2262.6,"mt":466.0,"sd":600.0,"det":265.1,"et":188.1,"flat":743.6,"hi":56.7,"md":45.1,"lo":36.7},{"t":33,"ts":"2021-01-16 09:00:00+00:00","temp":2.35,"total":2036.8,"mt":415.9,"sd":546.8,"det":235.0,"et":171.0,"flat":668.2,"hi":41.9,"md":33.1,"lo":28.2},{"t":34,"ts":"2021-01-16 10:00:00+00:00","temp":2.99,"total":1705.4,"mt":349.5,"sd":455.3,"det":187.7,"et":149.5,"flat":563.4,"hi":28.2,"md":22.4,"lo":20.5},{"t":35,"ts":"2021-01-16 11:00:00+00:00","temp":3.75,"total":1596.6,"mt":328.5,"sd":432.0,"det":178.1,"et":137.7,"flat":520.3,"hi":25.1,"md":20.5,"lo":18.7},{"t":36,"ts":"2021-01-16 12:00:00+00:00","temp":4.82,"total":1506.6,"mt":310.9,"sd":405.4,"det":169.3,"et":129.8,"flat":491.2,"hi":23.7,"md":19.5,"lo":18.1},{"t":37,"ts":"2021-01-16 13:00:00+00:00","temp":5.75,"total":1420.1,"mt":294.5,"sd":387.6,"det":159.8,"et":121.4,"flat":456.8,"hi":22.8,"md":18.7,"lo":17.2},{"t":38,"ts":"2021-01-16 14:00:00+00:00","temp":6.52,"total":1529.4,"mt":316.5,"sd":422.5,"det":182.2,"et":135.1,"flat":473.2,"hi":30.1,"md":25.1,"lo":21.9},{"t":39,"ts":"2021-01-16 15:00:00+00:00","temp":6.91,"total":1615.8,"mt":330.3,"sd":445.7,"det":191.2,"et":141.9,"flat":506.8,"hi":39.2,"md":31.2,"lo":26.2},{"t":40,"ts":"2021-01-16 16:00:00+00:00","temp":6.86,"total":1759.1,"mt":361.1,"sd":474.8,"det":207.1,"et":149.5,"flat":566.6,"hi":54.7,"md":43.9,"lo":35.5},{"t":41,"ts":"2021-01-16 17:00:00+00:00","temp":6.34,"total":1890.3,"mt":387.9,"sd":505.1,"det":223.2,"et":159.6,"flat":614.4,"hi":64.7,"md":50.5,"lo":40.6},{"t":42,"ts":"2021-01-16 18:00:00+00:00","temp":5.72,"total":2009.7,"mt":412.7,"sd":534.6,"det":235.4,"et":169.9,"flat":657.0,"hi":72.3,"md":57.9,"lo":44.8},{"t":43,"ts":"2021-01-16 19:00:00+00:00","temp":5.12,"total":2069.1,"mt":425.9,"sd":549.5,"det":241.8,"et":174.5,"flat":677.4,"hi":72.5,"md":58.1,"lo":45.0},{"t":44,"ts":"2021-01-16 20:00:00+00:00","temp":4.8,"total":2103.2,"mt":433.0,"sd":558.2,"det":245.6,"et":177.4,"flat":689.0,"hi":74.4,"md":59.4,"lo":46.2},{"t":45,"ts":"2021-01-16 21:00:00+00:00","temp":4.33,"total":2149.8,"mt":442.5,"sd":570.6,"det":250.7,"et":181.5,"flat":704.5,"hi":76.4,"md":61.0,"lo":47.6},{"t":46,"ts":"2021-01-16 22:00:00+00:00","temp":4.0,"total":2183.8,"mt":449.4,"sd":579.3,"det":254.6,"et":184.5,"flat":716.0,"hi":78.6,"md":62.0,"lo":48.6},{"t":47,"ts":"2021-01-16 23:00:00+00:00","temp":3.84,"total":2198.0,"mt":452.5,"sd":583.0,"det":256.2,"et":185.6,"flat":720.8,"hi":78.6,"md":62.0,"lo":48.6},{"t":48,"ts":"2021-01-17 00:00:00+00:00","temp":3.94,"total":2189.2,"mt":450.6,"sd":580.7,"det":255.1,"et":184.9,"flat":717.9,"hi":78.6,"md":62.0,"lo":48.6},{"t":49,"ts":"2021-01-17 01:00:00+00:00","temp":4.02,"total":2182.3,"mt":449.1,"sd":578.9,"det":254.4,"et":184.3,"flat":715.5,"hi":78.6,"md":62.0,"lo":48.6},{"t":50,"ts":"2021-01-17 02:00:00+00:00","temp":3.95,"total":2188.0,"mt":450.3,"sd":580.4,"det":255.1,"et":184.8,"flat":717.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":51,"ts":"2021-01-17 03:00:00+00:00","temp":3.82,"total":2199.6,"mt":452.8,"sd":583.5,"det":256.4,"et":185.8,"flat":721.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":52,"ts":"2021-01-17 04:00:00+00:00","temp":3.54,"total":2224.3,"mt":458.0,"sd":590.0,"det":259.4,"et":187.8,"flat":729.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":53,"ts":"2021-01-17 05:00:00+00:00","temp":3.21,"total":2248.3,"mt":463.4,"sd":596.1,"det":262.4,"et":189.6,"flat":736.9,"hi":76.5,"md":60.3,"lo":47.5},{"t":54,"ts":"2021-01-17 06:00:00+00:00","temp":2.92,"total":2269.5,"mt":468.2,"sd":601.7,"det":265.0,"et":190.8,"flat":743.9,"hi":74.3,"md":58.9,"lo":46.6},{"t":55,"ts":"2021-01-17 07:00:00+00:00","temp":2.86,"total":2267.3,"mt":467.6,"sd":601.0,"det":265.0,"et":190.6,"flat":743.1,"hi":71.5,"md":56.0,"lo":45.2},{"t":56,"ts":"2021-01-17 08:00:00+00:00","temp":2.41,"total":2210.3,"mt":454.9,"sd":586.8,"det":259.3,"et":183.9,"flat":725.3,"hi":56.7,"md":45.1,"lo":36.7},{"t":57,"ts":"2021-01-17 09:00:00+00:00","temp":2.33,"total":2038.6,"mt":416.2,"sd":547.9,"det":235.6,"et":171.3,"flat":667.6,"hi":41.9,"md":33.1,"lo":28.2},{"t":58,"ts":"2021-01-17 10:00:00+00:00","temp":2.46,"total":1737.9,"mt":356.2,"sd":464.4,"det":191.4,"et":152.5,"flat":573.4,"hi":28.2,"md":22.4,"lo":20.5},{"t":59,"ts":"2021-01-17 11:00:00+00:00","temp":3.11,"total":1634.8,"mt":336.5,"sd":442.8,"det":182.6,"et":141.1,"flat":531.9,"hi":25.1,"md":20.5,"lo":18.7},{"t":60,"ts":"2021-01-17 12:00:00+00:00","temp":3.98,"total":1557.3,"mt":321.6,"sd":419.2,"det":175.1,"et":134.2,"flat":507.2,"hi":23.7,"md":19.5,"lo":18.1},{"t":61,"ts":"2021-01-17 13:00:00+00:00","temp":4.64,"total":1486.1,"mt":308.6,"sd":405.5,"det":167.1,"et":126.9,"flat":477.9,"hi":22.8,"md":18.7,"lo":17.2},{"t":62,"ts":"2021-01-17 14:00:00+00:00","temp":5.02,"total":1634.3,"mt":339.0,"sd":451.2,"det":194.7,"et":144.1,"flat":505.4,"hi":30.1,"md":25.1,"lo":21.9},{"t":63,"ts":"2021-01-17 15:00:00+00:00","temp":5.07,"total":1758.3,"mt":360.3,"sd":484.6,"det":208.0,"et":154.1,"flat":551.4,"hi":39.2,"md":31.2,"lo":26.2},{"t":64,"ts":"2021-01-17 16:00:00+00:00","temp":4.82,"total":1932.0,"mt":397.7,"sd":521.0,"det":227.6,"et":163.7,"flat":622.0,"hi":54.7,"md":43.9,"lo":35.5},{"t":65,"ts":"2021-01-17 17:00:00+00:00","temp":4.2,"total":2078.9,"mt":427.8,"sd":554.9,"det":245.7,"et":175.1,"flat":675.5,"hi":64.7,"md":50.5,"lo":40.6},{"t":66,"ts":"2021-01-17 18:00:00+00:00","temp":3.62,"total":2198.3,"mt":452.5,"sd":584.0,"det":257.6,"et":185.5,"flat":718.7,"hi":72.3,"md":57.9,"lo":44.8},{"t":67,"ts":"2021-01-17 19:00:00+00:00","temp":3.59,"total":2206.5,"mt":455.0,"sd":585.4,"det":257.9,"et":185.8,"flat":722.5,"hi":72.5,"md":58.1,"lo":45.0},{"t":68,"ts":"2021-01-17 20:00:00+00:00","temp":4.28,"total":2149.6,"mt":442.9,"sd":570.1,"det":250.8,"et":181.1,"flat":704.7,"hi":74.4,"md":59.4,"lo":46.2},{"t":69,"ts":"2021-01-17 21:00:00+00:00","temp":4.68,"total":2119.1,"mt":436.0,"sd":562.3,"det":246.9,"et":178.9,"flat":695.0,"hi":76.4,"md":61.0,"lo":47.6},{"t":70,"ts":"2021-01-17 22:00:00+00:00","temp":4.97,"total":2097.2,"mt":431.1,"sd":556.5,"det":244.3,"et":177.3,"flat":688.0,"hi":78.6,"md":62.0,"lo":48.6},{"t":71,"ts":"2021-01-17 23:00:00+00:00","temp":4.86,"total":2107.0,"mt":433.2,"sd":559.1,"det":245.4,"et":178.1,"flat":691.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":72,"ts":"2021-01-18 00:00:00+00:00","temp":4.82,"total":2110.2,"mt":433.9,"sd":559.9,"det":245.8,"et":178.4,"flat":692.2,"hi":78.6,"md":62.0,"lo":48.6},{"t":73,"ts":"2021-01-18 01:00:00+00:00","temp":4.85,"total":2107.4,"mt":433.3,"sd":559.2,"det":245.5,"et":178.1,"flat":691.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":74,"ts":"2021-01-18 02:00:00+00:00","temp":4.92,"total":2101.7,"mt":432.1,"sd":557.7,"det":244.8,"et":177.7,"flat":689.4,"hi":78.6,"md":62.0,"lo":48.6},{"t":75,"ts":"2021-01-18 03:00:00+00:00","temp":5.01,"total":2093.4,"mt":430.4,"sd":555.5,"det":243.8,"et":177.0,"flat":686.8,"hi":78.6,"md":62.0,"lo":48.6},{"t":76,"ts":"2021-01-18 04:00:00+00:00","temp":4.95,"total":2098.7,"mt":431.5,"sd":556.8,"det":244.4,"et":177.4,"flat":688.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":77,"ts":"2021-01-18 05:00:00+00:00","temp":4.95,"total":2093.4,"mt":430.7,"sd":555.2,"det":244.0,"et":176.7,"flat":686.8,"hi":76.5,"md":60.3,"lo":47.5},{"t":78,"ts":"2021-01-18 06:00:00+00:00","temp":4.77,"total":2105.8,"mt":433.6,"sd":558.5,"det":245.6,"et":177.2,"flat":690.9,"hi":74.3,"md":58.9,"lo":46.6},{"t":79,"ts":"2021-01-18 07:00:00+00:00","temp":4.59,"total":2114.6,"mt":435.4,"sd":560.7,"det":247.0,"et":178.0,"flat":693.6,"hi":71.5,"md":56.0,"lo":45.2},{"t":80,"ts":"2021-01-18 08:00:00+00:00","temp":4.6,"total":2025.1,"mt":416.1,"sd":537.9,"det":237.3,"et":168.7,"flat":665.1,"hi":56.7,"md":45.1,"lo":36.7},{"t":81,"ts":"2021-01-18 09:00:00+00:00","temp":4.63,"total":1861.7,"mt":379.5,"sd":500.5,"det":215.0,"et":156.7,"flat":610.1,"hi":41.9,"md":33.1,"lo":28.2},{"t":82,"ts":"2021-01-18 10:00:00+00:00","temp":4.65,"total":1600.0,"mt":327.3,"sd":427.9,"det":176.4,"et":140.4,"flat":528.0,"hi":28.2,"md":22.4,"lo":20.5},{"t":83,"ts":"2021-01-18 11:00:00+00:00","temp":4.95,"total":1523.3,"mt":312.9,"sd":412.6,"det":170.2,"et":131.6,"flat":495.9,"hi":25.1,"md":20.5,"lo":18.7},{"t":84,"ts":"2021-01-18 12:00:00+00:00","temp":5.4,"total":1471.7,"mt":303.4,"sd":396.3,"det":165.5,"et":126.9,"flat":479.6,"hi":23.7,"md":19.5,"lo":18.1},{"t":85,"ts":"2021-01-18 13:00:00+00:00","temp":5.76,"total":1419.6,"mt":294.3,"sd":387.4,"det":159.7,"et":121.3,"flat":456.9,"hi":22.8,"md":18.7,"lo":17.2},{"t":86,"ts":"2021-01-18 14:00:00+00:00","temp":5.9,"total":1572.7,"mt":325.8,"sd":434.1,"det":187.2,"et":138.7,"flat":486.8,"hi":30.1,"md":25.1,"lo":21.9},{"t":87,"ts":"2021-01-18 15:00:00+00:00","temp":5.91,"total":1694.2,"mt":346.8,"sd":466.9,"det":200.3,"et":148.5,"flat":531.7,"hi":39.2,"md":31.2,"lo":26.2},{"t":88,"ts":"2021-01-18 16:00:00+00:00","temp":5.71,"total":1857.4,"mt":381.9,"sd":501.1,"det":218.7,"et":157.6,"flat":598.0,"hi":54.7,"md":43.9,"lo":35.5},{"t":89,"ts":"2021-01-18 17:00:00+00:00","temp":5.29,"total":1984.4,"mt":407.8,"sd":529.9,"det":234.4,"et":167.3,"flat":645.0,"hi":64.7,"md":50.5,"lo":40.6},{"t":90,"ts":"2021-01-18 18:00:00+00:00","temp":4.88,"total":2086.4,"mt":428.9,"sd":554.5,"det":244.3,"et":176.2,"flat":682.4,"hi":72.3,"md":57.9,"lo":44.8},{"t":91,"ts":"2021-01-18 19:00:00+00:00","temp":4.6,"total":2116.4,"mt":436.0,"sd":561.7,"det":247.2,"et":178.3,"flat":693.2,"hi":72.5,"md":58.1,"lo":45.0},{"t":92,"ts":"2021-01-18 20:00:00+00:00","temp":4.52,"total":2127.9,"mt":438.3,"sd":564.2,"det":248.2,"et":179.3,"flat":697.8,"hi":74.4,"md":59.4,"lo":46.2},{"t":93,"ts":"2021-01-18 21:00:00+00:00","temp":4.54,"total":2131.2,"mt":438.6,"sd":565.1,"det":248.1,"et":179.7,"flat":699.5,"hi":76.4,"md":61.0,"lo":47.6},{"t":94,"ts":"2021-01-18 22:00:00+00:00","temp":4.51,"total":2138.1,"mt":439.9,"sd":566.8,"det":248.8,"et":180.5,"flat":702.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":95,"ts":"2021-01-18 23:00:00+00:00","temp":4.62,"total":2128.1,"mt":437.7,"sd":564.4,"det":247.8,"et":179.8,"flat":698.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":96,"ts":"2021-01-19 00:00:00+00:00","temp":4.67,"total":2124.2,"mt":436.9,"sd":563.7,"det":247.5,"et":179.5,"flat":696.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":97,"ts":"2021-01-19 01:00:00+00:00","temp":4.67,"total":2124.1,"mt":436.8,"sd":563.8,"det":247.6,"et":179.6,"flat":696.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":98,"ts":"2021-01-19 02:00:00+00:00","temp":4.53,"total":2136.5,"mt":439.4,"sd":567.1,"det":249.1,"et":180.6,"flat":700.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":99,"ts":"2021-01-19 03:00:00+00:00","temp":4.5,"total":2139.7,"mt":440.1,"sd":567.7,"det":249.3,"et":180.8,"flat":701.7,"hi":78.6,"md":62.0,"lo":48.6},{"t":100,"ts":"2021-01-19 04:00:00+00:00","temp":4.16,"total":2170.0,"mt":446.6,"sd":575.8,"det":253.1,"et":183.4,"flat":711.2,"hi":78.6,"md":62.0,"lo":48.6},{"t":101,"ts":"2021-01-19 05:00:00+00:00","temp":4.19,"total":2162.1,"mt":445.2,"sd":573.4,"det":252.2,"et":182.4,"flat":708.7,"hi":76.5,"md":60.3,"lo":47.5},{"t":102,"ts":"2021-01-19 06:00:00+00:00","temp":4.14,"total":2161.7,"mt":445.4,"sd":573.3,"det":252.3,"et":181.9,"flat":708.8,"hi":74.3,"md":58.9,"lo":46.6},{"t":103,"ts":"2021-01-19 07:00:00+00:00","temp":4.2,"total":2149.3,"mt":442.7,"sd":569.8,"det":251.0,"et":180.8,"flat":704.9,"hi":71.5,"md":56.0,"lo":45.2},{"t":104,"ts":"2021-01-19 08:00:00+00:00","temp":4.61,"total":2024.6,"mt":416.0,"sd":537.7,"det":237.3,"et":168.7,"flat":664.9,"hi":56.7,"md":45.1,"lo":36.7},{"t":105,"ts":"2021-01-19 09:00:00+00:00","temp":4.69,"total":1856.9,"mt":378.5,"sd":499.1,"det":214.4,"et":156.3,"flat":608.7,"hi":41.9,"md":33.1,"lo":28.2},{"t":106,"ts":"2021-01-19 10:00:00+00:00","temp":4.88,"total":1584.9,"mt":324.2,"sd":423.7,"det":174.7,"et":139.1,"flat":523.2,"hi":28.2,"md":22.4,"lo":20.5},{"t":107,"ts":"2021-01-19 11:00:00+00:00","temp":5.16,"total":1510.3,"mt":310.2,"sd":408.9,"det":168.7,"et":130.5,"flat":492.0,"hi":25.1,"md":20.5,"lo":18.7},{"t":108,"ts":"2021-01-19 12:00:00+00:00","temp":5.75,"total":1450.0,"mt":298.8,"sd":390.2,"det":162.9,"et":125.0,"flat":473.0,"hi":23.7,"md":19.5,"lo":18.1},{"t":109,"ts":"2021-01-19 13:00:00+00:00","temp":6.1,"total":1399.0,"mt":289.9,"sd":381.5,"det":157.3,"et":119.6,"flat":450.7,"hi":22.8,"md":18.7,"lo":17.2},{"t":110,"ts":"2021-01-19 14:00:00+00:00","temp":6.1,"total":1558.9,"mt":322.8,"sd":430.1,"det":185.5,"et":137.4,"flat":483.1,"hi":30.1,"md":25.1,"lo":21.9},{"t":111,"ts":"2021-01-19 15:00:00+00:00","temp":5.95,"total":1691.3,"mt":346.2,"sd":465.9,"det":199.9,"et":148.2,"flat":531.1,"hi":39.2,"md":31.2,"lo":26.2},{"t":112,"ts":"2021-01-19 16:00:00+00:00","temp":5.78,"total":1851.9,"mt":380.8,"sd":499.6,"det":218.0,"et":157.1,"flat":596.4,"hi":54.7,"md":43.9,"lo":35.5},{"t":113,"ts":"2021-01-19 17:00:00+00:00","temp":5.7,"total":1947.4,"mt":400.0,"sd":520.2,"det":230.0,"et":164.3,"flat":633.0,"hi":64.7,"md":50.5,"lo":40.6},{"t":114,"ts":"2021-01-19 18:00:00+00:00","temp":5.89,"total":1993.8,"mt":409.3,"sd":530.6,"det":233.5,"et":168.6,"flat":651.8,"hi":72.3,"md":57.9,"lo":44.8},{"t":115,"ts":"2021-01-19 19:00:00+00:00","temp":6.26,"total":1963.2,"mt":403.4,"sd":522.2,"det":229.4,"et":165.9,"flat":642.3,"hi":72.5,"md":58.1,"lo":45.0},{"t":116,"ts":"2021-01-19 20:00:00+00:00","temp":5.98,"total":1994.6,"mt":410.0,"sd":530.1,"det":232.9,"et":168.6,"flat":653.0,"hi":74.4,"md":59.4,"lo":46.2},{"t":117,"ts":"2021-01-19 21:00:00+00:00","temp":6.29,"total":1969.9,"mt":404.3,"sd":524.0,"det":229.8,"et":166.8,"flat":644.9,"hi":76.4,"md":61.0,"lo":47.6},{"t":118,"ts":"2021-01-19 22:00:00+00:00","temp":6.46,"total":1958.3,"mt":401.6,"sd":521.1,"det":228.4,"et":166.2,"flat":641.0,"hi":78.6,"md":62.0,"lo":48.6},{"t":119,"ts":"2021-01-19 23:00:00+00:00","temp":6.46,"total":1958.0,"mt":401.5,"sd":521.4,"det":228.5,"et":166.3,"flat":640.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":120,"ts":"2021-01-20 00:00:00+00:00","temp":6.67,"total":1938.4,"mt":397.3,"sd":516.3,"det":226.2,"et":164.7,"flat":633.9,"hi":78.6,"md":62.0,"lo":48.6},{"t":121,"ts":"2021-01-20 01:00:00+00:00","temp":6.83,"total":1922.6,"mt":393.9,"sd":512.1,"det":224.3,"et":163.3,"flat":629.0,"hi":78.6,"md":62.0,"lo":48.6},{"t":122,"ts":"2021-01-20 02:00:00+00:00","temp":6.99,"total":1907.6,"mt":390.7,"sd":507.9,"det":222.3,"et":162.0,"flat":624.7,"hi":78.6,"md":62.0,"lo":48.6},{"t":123,"ts":"2021-01-20 03:00:00+00:00","temp":7.09,"total":1898.7,"mt":388.9,"sd":505.2,"det":221.1,"et":161.2,"flat":622.4,"hi":78.6,"md":62.0,"lo":48.6},{"t":124,"ts":"2021-01-20 04:00:00+00:00","temp":7.18,"total":1889.5,"mt":387.0,"sd":502.6,"det":219.8,"et":160.3,"flat":619.8,"hi":78.6,"md":62.0,"lo":48.6},{"t":125,"ts":"2021-01-20 05:00:00+00:00","temp":7.19,"total":1883.8,"mt":386.1,"sd":500.8,"det":219.3,"et":159.6,"flat":618.0,"hi":76.5,"md":60.3,"lo":47.5},{"t":126,"ts":"2021-01-20 06:00:00+00:00","temp":6.97,"total":1900.9,"mt":390.0,"sd":505.4,"det":221.5,"et":160.5,"flat":623.5,"hi":74.3,"md":58.9,"lo":46.6},{"t":127,"ts":"2021-01-20 07:00:00+00:00","temp":6.87,"total":1902.9,"mt":390.4,"sd":505.8,"det":222.1,"et":160.7,"flat":623.9,"hi":71.5,"md":56.0,"lo":45.2},{"t":128,"ts":"2021-01-20 08:00:00+00:00","temp":6.34,"total":1870.6,"mt":383.3,"sd":498.0,"det":219.2,"et":156.3,"flat":613.8,"hi":56.7,"md":45.1,"lo":36.7},{"t":129,"ts":"2021-01-20 09:00:00+00:00","temp":6.1,"total":1743.5,"mt":354.7,"sd":469.5,"det":201.6,"et":147.1,"flat":570.6,"hi":41.9,"md":33.1,"lo":28.2},{"t":130,"ts":"2021-01-20 10:00:00+00:00","temp":5.99,"total":1511.5,"mt":308.6,"sd":405.0,"det":167.0,"et":132.9,"flat":498.1,"hi":28.2,"md":22.4,"lo":20.5},{"t":131,"ts":"2021-01-20 11:00:00+00:00","temp":6.14,"total":1448.0,"mt":296.9,"sd":392.8,"det":162.0,"et":125.3,"flat":471.0,"hi":25.1,"md":20.5,"lo":18.7},{"t":132,"ts":"2021-01-20 12:00:00+00:00","temp":6.27,"total":1417.4,"mt":291.7,"sd":382.3,"det":159.6,"et":122.4,"flat":461.3,"hi":23.7,"md":19.5,"lo":18.1},{"t":133,"ts":"2021-01-20 13:00:00+00:00","temp":6.26,"total":1389.8,"mt":287.8,"sd":379.6,"det":156.5,"et":119.0,"flat":446.9,"hi":22.8,"md":18.7,"lo":17.2},{"t":134,"ts":"2021-01-20 14:00:00+00:00","temp":5.98,"total":1567.7,"mt":324.6,"sd":433.0,"det":186.7,"et":138.3,"flat":485.0,"hi":30.1,"md":25.1,"lo":21.9},{"t":135,"ts":"2021-01-20 15:00:00+00:00","temp":5.65,"total":1714.7,"mt":351.0,"sd":472.8,"det":202.9,"et":150.4,"flat":537.6,"hi":39.2,"md":31.2,"lo":26.2},{"t":136,"ts":"2021-01-20 16:00:00+00:00","temp":5.1,"total":1909.2,"mt":392.8,"sd":515.2,"det":225.0,"et":161.9,"flat":614.2,"hi":54.7,"md":43.9,"lo":35.5},{"t":137,"ts":"2021-01-20 17:00:00+00:00","temp":4.55,"total":2049.0,"mt":421.4,"sd":547.4,"det":242.4,"et":172.7,"flat":665.1,"hi":64.7,"md":50.5,"lo":40.6},{"t":138,"ts":"2021-01-20 18:00:00+00:00","temp":4.03,"total":2162.1,"mt":444.8,"sd":575.1,"det":253.7,"et":182.7,"flat":705.9,"hi":72.3,"md":57.9,"lo":44.8},{"t":139,"ts":"2021-01-20 19:00:00+00:00","temp":3.74,"total":2193.2,"mt":452.0,"sd":582.7,"det":256.8,"et":184.9,"flat":716.7,"hi":72.5,"md":58.1,"lo":45.0},{"t":140,"ts":"2021-01-20 20:00:00+00:00","temp":4.02,"total":2172.8,"mt":447.7,"sd":577.1,"det":254.2,"et":183.4,"flat":710.5,"hi":74.4,"md":59.4,"lo":46.2},{"t":141,"ts":"2021-01-20 21:00:00+00:00","temp":3.81,"total":2196.2,"mt":452.2,"sd":583.5,"det":256.6,"et":185.5,"flat":718.3,"hi":76.4,"md":61.0,"lo":47.6},{"t":142,"ts":"2021-01-20 22:00:00+00:00","temp":3.61,"total":2217.9,"mt":456.5,"sd":589.1,"det":259.1,"et":187.6,"flat":725.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":143,"ts":"2021-01-20 23:00:00+00:00","temp":3.36,"total":2240.4,"mt":461.3,"sd":595.2,"det":261.9,"et":189.5,"flat":732.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":144,"ts":"2021-01-21 00:00:00+00:00","temp":2.94,"total":2277.1,"mt":469.0,"sd":604.9,"det":266.2,"et":192.5,"flat":744.5,"hi":78.6,"md":62.0,"lo":48.6},{"t":145,"ts":"2021-01-21 01:00:00+00:00","temp":2.04,"total":2353.9,"mt":485.2,"sd":624.5,"det":274.9,"et":198.7,"flat":770.6,"hi":78.6,"md":62.0,"lo":48.6},{"t":146,"ts":"2021-01-21 02:00:00+00:00","temp":1.68,"total":2384.6,"mt":491.7,"sd":632.2,"det":278.2,"et":201.1,"flat":781.2,"hi":78.6,"md":62.0,"lo":48.6},{"t":147,"ts":"2021-01-21 03:00:00+00:00","temp":1.56,"total":2394.4,"mt":493.8,"sd":634.7,"det":279.3,"et":201.9,"flat":784.7,"hi":78.6,"md":62.0,"lo":48.6},{"t":148,"ts":"2021-01-21 04:00:00+00:00","temp":1.55,"total":2395.7,"mt":494.1,"sd":635.0,"det":279.4,"et":202.0,"flat":785.2,"hi":78.6,"md":62.0,"lo":48.6},{"t":149,"ts":"2021-01-21 05:00:00+00:00","temp":1.56,"total":2390.0,"mt":493.2,"sd":633.2,"det":278.9,"et":201.3,"flat":783.4,"hi":76.5,"md":60.3,"lo":47.5},{"t":150,"ts":"2021-01-21 06:00:00+00:00","temp":1.77,"total":2367.5,"mt":488.8,"sd":627.5,"det":276.5,"et":199.0,"flat":775.8,"hi":74.3,"md":58.9,"lo":46.6},{"t":151,"ts":"2021-01-21 07:00:00+00:00","temp":1.86,"total":2353.0,"mt":485.6,"sd":623.6,"det":275.1,"et":197.8,"flat":771.0,"hi":71.5,"md":56.0,"lo":45.2},{"t":152,"ts":"2021-01-21 08:00:00+00:00","temp":1.84,"total":2257.2,"mt":464.7,"sd":599.2,"det":264.8,"et":187.8,"flat":740.6,"hi":56.7,"md":45.1,"lo":36.7},{"t":153,"ts":"2021-01-21 09:00:00+00:00","temp":1.88,"total":2071.5,"mt":423.0,"sd":556.8,"det":239.4,"et":174.1,"flat":678.2,"hi":41.9,"md":33.1,"lo":28.2},{"t":154,"ts":"2021-01-21 10:00:00+00:00","temp":1.98,"total":1767.5,"mt":362.4,"sd":472.3,"det":194.7,"et":155.0,"flat":583.0,"hi":28.2,"md":22.4,"lo":20.5},{"t":155,"ts":"2021-01-21 11:00:00+00:00","temp":2.36,"total":1679.0,"mt":345.8,"sd":454.7,"det":187.4,"et":144.8,"flat":546.2,"hi":25.1,"md":20.5,"lo":18.7},{"t":156,"ts":"2021-01-21 12:00:00+00:00","temp":2.97,"total":1616.5,"mt":334.2,"sd":435.0,"det":181.7,"et":139.2,"flat":526.3,"hi":23.7,"md":19.5,"lo":18.1},{"t":157,"ts":"2021-01-21 13:00:00+00:00","temp":3.19,"total":1569.1,"mt":326.5,"sd":428.1,"det":176.4,"et":133.8,"flat":504.3,"hi":22.8,"md":18.7,"lo":17.2},{"t":158,"ts":"2021-01-21 14:00:00+00:00","temp":3.58,"total":1731.4,"mt":359.7,"sd":478.1,"det":206.4,"et":152.6,"flat":534.6,"hi":30.1,"md":25.1,"lo":21.9},{"t":159,"ts":"2021-01-21 15:00:00+00:00","temp":4.27,"total":1818.9,"mt":373.0,"sd":501.2,"det":215.2,"et":159.3,"flat":570.2,"hi":39.2,"md":31.2,"lo":26.2},{"t":160,"ts":"2021-01-21 16:00:00+00:00","temp":4.56,"total":1953.5,"mt":402.3,"sd":526.7,"det":230.2,"et":165.5,"flat":628.8,"hi":54.7,"md":43.9,"lo":35.5},{"t":161,"ts":"2021-01-21 17:00:00+00:00","temp":4.23,"total":2076.8,"mt":427.3,"sd":554.4,"det":245.5,"et":174.9,"flat":674.7,"hi":64.7,"md":50.5,"lo":40.6},{"t":162,"ts":"2021-01-21 18:00:00+00:00","temp":3.72,"total":2190.0,"mt":450.7,"sd":582.0,"det":256.8,"et":184.9,"flat":715.6,"hi":72.3,"md":57.9,"lo":44.8},{"t":163,"ts":"2021-01-21 19:00:00+00:00","temp":3.26,"total":2235.7,"mt":461.1,"sd":593.5,"det":261.5,"et":188.3,"flat":731.3,"hi":72.5,"md":58.1,"lo":45.0},{"t":164,"ts":"2021-01-21 20:00:00+00:00","temp":3.14,"total":2250.1,"mt":464.0,"sd":596.9,"det":262.9,"et":189.6,"flat":736.6,"hi":74.4,"md":59.4,"lo":46.2},{"t":165,"ts":"2021-01-21 21:00:00+00:00","temp":2.74,"total":2289.5,"mt":471.9,"sd":607.5,"det":267.3,"et":193.1,"flat":749.7,"hi":76.4,"md":61.0,"lo":47.6},{"t":166,"ts":"2021-01-21 22:00:00+00:00","temp":2.32,"total":2330.0,"mt":480.2,"sd":618.0,"det":271.9,"et":196.6,"flat":763.3,"hi":78.6,"md":62.0,"lo":48.6},{"t":167,"ts":"2021-01-21 23:00:00+00:00","temp":2.08,"total":2350.8,"mt":484.6,"sd":623.4,"det":274.3,"et":198.4,"flat":770.1,"hi":78.6,"md":62.0,"lo":48.6},{"t":168,"ts":"2021-01-22 00:00:00+00:00","temp":1.93,"total":2363.3,"mt":487.2,"sd":626.7,"det":275.8,"et":199.4,"flat":774.2,"hi":78.6,"md":62.0,"lo":48.6}],"summer":[{"t":1,"ts":"2021-07-15 01:00:00+00:00","temp":16.02,"total":929.8,"mt":182.4,"sd":248.2,"det":102.4,"et":81.0,"flat":315.8,"hi":74.7,"md":62.0,"lo":51.1},{"t":2,"ts":"2021-07-15 02:00:00+00:00","temp":15.59,"total":982.4,"mt":193.7,"sd":262.2,"det":109.0,"et":85.3,"flat":332.2,"hi":74.7,"md":62.0,"lo":51.1},{"t":3,"ts":"2021-07-15 03:00:00+00:00","temp":15.14,"total":1036.5,"mt":205.3,"sd":276.6,"det":115.8,"et":89.7,"flat":349.1,"hi":74.7,"md":62.0,"lo":51.1},{"t":4,"ts":"2021-07-15 04:00:00+00:00","temp":14.66,"total":1088.4,"mt":216.7,"sd":290.2,"det":122.5,"et":93.7,"flat":365.4,"hi":72.4,"md":60.4,"lo":49.9},{"t":5,"ts":"2021-07-15 05:00:00+00:00","temp":14.29,"total":1126.5,"mt":225.2,"sd":300.3,"det":127.4,"et":96.4,"flat":377.2,"hi":70.3,"md":58.9,"lo":49.0},{"t":6,"ts":"2021-07-15 06:00:00+00:00","temp":14.26,"total":1123.3,"mt":224.4,"sd":299.7,"det":127.6,"et":96.2,"flat":375.4,"hi":67.3,"md":56.3,"lo":47.4},{"t":7,"ts":"2021-07-15 07:00:00+00:00","temp":14.74,"total":1017.2,"mt":202.4,"sd":272.2,"det":115.2,"et":86.6,"flat":340.9,"hi":53.3,"md":44.7,"lo":39.0},{"t":8,"ts":"2021-07-15 08:00:00+00:00","temp":15.89,"total":827.8,"mt":162.1,"sd":223.3,"det":92.1,"et":71.7,"flat":278.6,"hi":38.9,"md":33.5,"lo":30.0},{"t":9,"ts":"2021-07-15 09:00:00+00:00","temp":16.59,"total":692.4,"mt":134.6,"sd":186.4,"det":74.9,"et":61.9,"flat":234.6,"hi":26.7,"md":22.8,"lo":21.4},{"t":10,"ts":"2021-07-15 10:00:00+00:00","temp":16.92,"total":651.7,"mt":126.4,"sd":176.2,"det":70.7,"et":57.8,"flat":220.6,"hi":24.1,"md":21.0,"lo":19.2},{"t":11,"ts":"2021-07-15 11:00:00+00:00","temp":17.22,"total":621.7,"mt":120.5,"sd":167.8,"det":67.2,"et":55.1,"flat":211.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":12,"ts":"2021-07-15 12:00:00+00:00","temp":17.51,"total":592.9,"mt":114.7,"sd":160.2,"det":63.7,"et":52.4,"flat":202.0,"hi":21.5,"md":19.7,"lo":17.6},{"t":13,"ts":"2021-07-15 13:00:00+00:00","temp":18.15,"total":571.6,"mt":109.8,"sd":154.3,"det":61.4,"et":51.3,"flat":194.9,"hi":29.1,"md":25.4,"lo":22.6},{"t":14,"ts":"2021-07-15 14:00:00+00:00","temp":18.38,"total":590.6,"mt":113.1,"sd":159.5,"det":62.9,"et":52.9,"flat":202.2,"hi":37.3,"md":31.8,"lo":27.3},{"t":15,"ts":"2021-07-15 15:00:00+00:00","temp":18.32,"total":628.1,"mt":119.7,"sd":169.1,"det":66.4,"et":55.8,"flat":217.0,"hi":52.5,"md":44.2,"lo":36.9},{"t":16,"ts":"2021-07-15 16:00:00+00:00","temp":18.2,"total":650.1,"mt":123.8,"sd":174.2,"det":68.2,"et":57.6,"flat":226.4,"hi":61.3,"md":51.6,"lo":41.9},{"t":17,"ts":"2021-07-15 17:00:00+00:00","temp":17.62,"total":716.4,"mt":137.6,"sd":189.5,"det":74.8,"et":62.1,"flat":252.5,"hi":68.6,"md":58.1,"lo":46.9},{"t":18,"ts":"2021-07-15 18:00:00+00:00","temp":16.98,"total":797.9,"mt":155.1,"sd":211.6,"det":85.3,"et":69.0,"flat":277.0,"hi":68.8,"md":58.5,"lo":46.9},{"t":19,"ts":"2021-07-15 19:00:00+00:00","temp":16.31,"total":886.3,"mt":173.8,"sd":235.3,"det":96.5,"et":76.5,"flat":304.1,"hi":71.1,"md":59.5,"lo":48.2},{"t":20,"ts":"2021-07-15 20:00:00+00:00","temp":15.5,"total":989.9,"mt":195.7,"sd":263.2,"det":109.3,"et":85.3,"flat":336.4,"hi":72.9,"md":60.8,"lo":49.9},{"t":21,"ts":"2021-07-15 21:00:00+00:00","temp":14.83,"total":1073.4,"mt":213.3,"sd":285.6,"det":119.8,"et":92.5,"flat":362.1,"hi":74.7,"md":62.0,"lo":51.1},{"t":22,"ts":"2021-07-15 22:00:00+00:00","temp":14.05,"total":1164.3,"mt":232.8,"sd":309.7,"det":131.2,"et":100.0,"flat":390.7,"hi":74.7,"md":62.0,"lo":51.1},{"t":23,"ts":"2021-07-15 23:00:00+00:00","temp":13.09,"total":1273.6,"mt":256.2,"sd":339.0,"det":144.8,"et":109.1,"flat":424.5,"hi":74.7,"md":62.0,"lo":51.1},{"t":24,"ts":"2021-07-16 00:00:00+00:00","temp":12.53,"total":1336.2,"mt":269.5,"sd":355.9,"det":152.7,"et":114.3,"flat":443.8,"hi":74.7,"md":62.0,"lo":51.1},{"t":25,"ts":"2021-07-16 01:00:00+00:00","temp":12.33,"total":1357.9,"mt":274.2,"sd":361.8,"det":155.5,"et":116.2,"flat":450.2,"hi":74.7,"md":62.0,"lo":51.1},{"t":26,"ts":"2021-07-16 02:00:00+00:00","temp":11.98,"total":1396.7,"mt":282.6,"sd":371.3,"det":159.7,"et":119.1,"flat":463.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":27,"ts":"2021-07-16 03:00:00+00:00","temp":11.46,"total":1453.3,"mt":294.7,"sd":386.1,"det":166.5,"et":123.7,"flat":482.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":28,"ts":"2021-07-16 04:00:00+00:00","temp":11.06,"total":1491.0,"mt":303.0,"sd":396.0,"det":171.4,"et":126.6,"flat":494.0,"hi":72.4,"md":60.4,"lo":49.9},{"t":29,"ts":"2021-07-16 05:00:00+00:00","temp":10.89,"total":1505.3,"mt":306.4,"sd":399.1,"det":173.0,"et":127.1,"flat":499.7,"hi":70.3,"md":58.9,"lo":49.0},{"t":30,"ts":"2021-07-16 06:00:00+00:00","temp":11.93,"total":1385.5,"mt":280.9,"sd":367.3,"det":158.7,"et":117.1,"flat":461.6,"hi":67.3,"md":56.3,"lo":47.4},{"t":31,"ts":"2021-07-16 07:00:00+00:00","temp":15.06,"total":981.5,"mt":195.0,"sd":261.4,"det":109.8,"et":83.3,"flat":332.0,"hi":53.3,"md":44.7,"lo":39.0},{"t":32,"ts":"2021-07-16 08:00:00+00:00","temp":17.64,"total":636.5,"mt":121.7,"sd":170.8,"det":67.9,"et":55.9,"flat":220.3,"hi":38.9,"md":33.5,"lo":30.0},{"t":33,"ts":"2021-07-16 09:00:00+00:00","temp":19.0,"total":564.4,"mt":107.3,"sd":151.8,"det":59.9,"et":50.8,"flat":194.7,"hi":26.7,"md":22.8,"lo":21.4},{"t":34,"ts":"2021-07-16 10:00:00+00:00","temp":20.23,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":35,"ts":"2021-07-16 11:00:00+00:00","temp":21.23,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":36,"ts":"2021-07-16 12:00:00+00:00","temp":22.11,"total":552.2,"mt":105.7,"sd":149.4,"det":59.2,"et":49.1,"flat":188.8,"hi":21.5,"md":19.7,"lo":17.6},{"t":37,"ts":"2021-07-16 13:00:00+00:00","temp":22.91,"total":570.5,"mt":109.6,"sd":154.0,"det":61.4,"et":51.1,"flat":194.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":38,"ts":"2021-07-16 14:00:00+00:00","temp":23.08,"total":589.8,"mt":112.9,"sd":159.3,"det":62.9,"et":52.9,"flat":201.9,"hi":37.3,"md":31.8,"lo":27.3},{"t":39,"ts":"2021-07-16 15:00:00+00:00","temp":23.11,"total":626.9,"mt":119.4,"sd":168.9,"det":66.4,"et":55.7,"flat":216.6,"hi":52.5,"md":44.2,"lo":36.9},{"t":40,"ts":"2021-07-16 16:00:00+00:00","temp":23.01,"total":648.2,"mt":123.3,"sd":173.6,"det":68.2,"et":57.4,"flat":225.6,"hi":61.3,"md":51.6,"lo":41.9},{"t":41,"ts":"2021-07-16 17:00:00+00:00","temp":23.14,"total":667.0,"mt":126.7,"sd":178.0,"det":69.7,"et":58.6,"flat":233.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":42,"ts":"2021-07-16 18:00:00+00:00","temp":23.04,"total":667.6,"mt":126.8,"sd":178.1,"det":69.7,"et":58.7,"flat":234.3,"hi":68.8,"md":58.5,"lo":46.9},{"t":43,"ts":"2021-07-16 19:00:00+00:00","temp":22.41,"total":672.1,"mt":127.6,"sd":179.0,"det":70.0,"et":59.2,"flat":236.3,"hi":71.1,"md":59.5,"lo":48.2},{"t":44,"ts":"2021-07-16 20:00:00+00:00","temp":22.06,"total":677.0,"mt":128.2,"sd":180.4,"det":70.3,"et":59.8,"flat":238.3,"hi":72.9,"md":60.8,"lo":49.9},{"t":45,"ts":"2021-07-16 21:00:00+00:00","temp":20.74,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":46,"ts":"2021-07-16 22:00:00+00:00","temp":18.56,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":47,"ts":"2021-07-16 23:00:00+00:00","temp":16.98,"total":811.6,"mt":157.0,"sd":215.8,"det":87.2,"et":70.9,"flat":280.7,"hi":74.7,"md":62.0,"lo":51.1},{"t":48,"ts":"2021-07-17 00:00:00+00:00","temp":16.45,"total":877.8,"mt":171.3,"sd":233.2,"det":95.3,"et":76.2,"flat":301.7,"hi":74.7,"md":62.0,"lo":51.1},{"t":49,"ts":"2021-07-17 01:00:00+00:00","temp":16.39,"total":885.1,"mt":172.8,"sd":235.7,"det":96.5,"et":77.1,"flat":303.1,"hi":74.7,"md":62.0,"lo":51.1},{"t":50,"ts":"2021-07-17 02:00:00+00:00","temp":16.16,"total":913.3,"mt":178.8,"sd":243.6,"det":100.3,"et":79.5,"flat":311.1,"hi":74.7,"md":62.0,"lo":51.1},{"t":51,"ts":"2021-07-17 03:00:00+00:00","temp":15.76,"total":961.8,"mt":189.3,"sd":256.4,"det":106.3,"et":83.5,"flat":326.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":52,"ts":"2021-07-17 04:00:00+00:00","temp":15.37,"total":1004.6,"mt":198.8,"sd":267.5,"det":111.7,"et":86.7,"flat":339.9,"hi":72.4,"md":60.4,"lo":49.9},{"t":53,"ts":"2021-07-17 05:00:00+00:00","temp":15.01,"total":1042.9,"mt":207.4,"sd":277.5,"det":116.6,"et":89.3,"flat":352.1,"hi":70.3,"md":58.9,"lo":49.0},{"t":54,"ts":"2021-07-17 06:00:00+00:00","temp":15.26,"total":1005.9,"mt":199.4,"sd":267.6,"det":112.3,"et":86.3,"flat":340.3,"hi":67.3,"md":56.3,"lo":47.4},{"t":55,"ts":"2021-07-17 07:00:00+00:00","temp":16.74,"total":784.1,"mt":152.5,"sd":209.6,"det":85.5,"et":67.5,"flat":269.0,"hi":53.3,"md":44.7,"lo":39.0},{"t":56,"ts":"2021-07-17 08:00:00+00:00","temp":19.28,"total":595.7,"mt":113.1,"sd":159.6,"det":62.9,"et":52.5,"flat":207.6,"hi":38.9,"md":33.5,"lo":30.0},{"t":57,"ts":"2021-07-17 09:00:00+00:00","temp":21.11,"total":564.4,"mt":107.3,"sd":151.8,"det":59.9,"et":50.8,"flat":194.7,"hi":26.7,"md":22.8,"lo":21.4},{"t":58,"ts":"2021-07-17 10:00:00+00:00","temp":22.64,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":59,"ts":"2021-07-17 11:00:00+00:00","temp":23.9,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":60,"ts":"2021-07-17 12:00:00+00:00","temp":24.9,"total":561.7,"mt":107.5,"sd":151.4,"det":59.8,"et":49.9,"flat":193.1,"hi":21.5,"md":19.7,"lo":17.6},{"t":61,"ts":"2021-07-17 13:00:00+00:00","temp":25.61,"total":600.2,"mt":115.2,"sd":161.1,"det":63.8,"et":53.7,"flat":206.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":62,"ts":"2021-07-17 14:00:00+00:00","temp":26.06,"total":636.2,"mt":121.6,"sd":170.5,"det":66.8,"et":56.9,"flat":220.5,"hi":37.3,"md":31.8,"lo":27.3},{"t":63,"ts":"2021-07-17 15:00:00+00:00","temp":26.24,"total":684.1,"mt":130.0,"sd":182.3,"det":71.2,"et":60.4,"flat":240.2,"hi":52.5,"md":44.2,"lo":36.9},{"t":64,"ts":"2021-07-17 16:00:00+00:00","temp":26.21,"total":707.3,"mt":134.2,"sd":187.4,"det":73.1,"et":62.2,"flat":250.4,"hi":61.3,"md":51.6,"lo":41.9},{"t":65,"ts":"2021-07-17 17:00:00+00:00","temp":25.94,"total":718.6,"mt":136.2,"sd":189.8,"det":73.9,"et":62.8,"flat":255.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":66,"ts":"2021-07-17 18:00:00+00:00","temp":25.47,"total":702.4,"mt":133.2,"sd":185.8,"det":72.5,"et":61.5,"flat":249.5,"hi":68.8,"md":58.5,"lo":46.9},{"t":67,"ts":"2021-07-17 19:00:00+00:00","temp":24.72,"total":680.7,"mt":129.1,"sd":180.5,"det":70.5,"et":59.7,"flat":240.8,"hi":71.1,"md":59.5,"lo":48.2},{"t":68,"ts":"2021-07-17 20:00:00+00:00","temp":23.73,"total":677.0,"mt":128.2,"sd":180.4,"det":70.3,"et":59.8,"flat":238.3,"hi":72.9,"md":60.8,"lo":49.9},{"t":69,"ts":"2021-07-17 21:00:00+00:00","temp":22.26,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":70,"ts":"2021-07-17 22:00:00+00:00","temp":20.82,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":71,"ts":"2021-07-17 23:00:00+00:00","temp":19.66,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":72,"ts":"2021-07-18 00:00:00+00:00","temp":18.69,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":73,"ts":"2021-07-18 01:00:00+00:00","temp":17.85,"total":700.4,"mt":132.8,"sd":187.8,"det":73.8,"et":62.4,"flat":243.6,"hi":74.7,"md":62.0,"lo":51.1},{"t":74,"ts":"2021-07-18 02:00:00+00:00","temp":17.09,"total":796.9,"mt":153.6,"sd":213.3,"det":86.0,"et":70.2,"flat":273.7,"hi":74.7,"md":62.0,"lo":51.1},{"t":75,"ts":"2021-07-18 03:00:00+00:00","temp":16.49,"total":872.6,"mt":170.0,"sd":233.3,"det":95.4,"et":76.4,"flat":297.6,"hi":74.7,"md":62.0,"lo":51.1},{"t":76,"ts":"2021-07-18 04:00:00+00:00","temp":15.82,"total":949.3,"mt":186.8,"sd":253.4,"det":105.2,"et":82.3,"flat":321.7,"hi":72.4,"md":60.4,"lo":49.9},{"t":77,"ts":"2021-07-18 05:00:00+00:00","temp":15.25,"total":1014.3,"mt":201.1,"sd":270.5,"det":113.4,"et":87.2,"flat":342.0,"hi":70.3,"md":58.9,"lo":49.0},{"t":78,"ts":"2021-07-18 06:00:00+00:00","temp":15.09,"total":1026.0,"mt":203.5,"sd":273.6,"det":115.3,"et":88.2,"flat":345.4,"hi":67.3,"md":56.3,"lo":47.4},{"t":79,"ts":"2021-07-18 07:00:00+00:00","temp":15.95,"total":877.7,"mt":172.5,"sd":235.1,"det":97.6,"et":75.2,"flat":297.3,"hi":53.3,"md":44.7,"lo":39.0},{"t":80,"ts":"2021-07-18 08:00:00+00:00","temp":17.72,"total":627.0,"mt":119.5,"sd":169.1,"det":67.4,"et":55.3,"flat":215.7,"hi":38.9,"md":33.5,"lo":30.0},{"t":81,"ts":"2021-07-18 09:00:00+00:00","temp":18.85,"total":564.4,"mt":107.3,"sd":151.8,"det":59.9,"et":50.8,"flat":194.7,"hi":26.7,"md":22.8,"lo":21.4},{"t":82,"ts":"2021-07-18 10:00:00+00:00","temp":20.0,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":83,"ts":"2021-07-18 11:00:00+00:00","temp":21.25,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":84,"ts":"2021-07-18 12:00:00+00:00","temp":22.06,"total":552.2,"mt":105.7,"sd":149.4,"det":59.2,"et":49.1,"flat":188.8,"hi":21.5,"md":19.7,"lo":17.6},{"t":85,"ts":"2021-07-18 13:00:00+00:00","temp":22.53,"total":570.5,"mt":109.6,"sd":154.0,"det":61.4,"et":51.1,"flat":194.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":86,"ts":"2021-07-18 14:00:00+00:00","temp":22.34,"total":589.8,"mt":112.9,"sd":159.3,"det":62.9,"et":52.9,"flat":201.9,"hi":37.3,"md":31.8,"lo":27.3},{"t":87,"ts":"2021-07-18 15:00:00+00:00","temp":22.06,"total":626.9,"mt":119.4,"sd":168.9,"det":66.4,"et":55.7,"flat":216.6,"hi":52.5,"md":44.2,"lo":36.9},{"t":88,"ts":"2021-07-18 16:00:00+00:00","temp":21.75,"total":648.2,"mt":123.3,"sd":173.6,"det":68.2,"et":57.4,"flat":225.6,"hi":61.3,"md":51.6,"lo":41.9},{"t":89,"ts":"2021-07-18 17:00:00+00:00","temp":21.28,"total":667.0,"mt":126.7,"sd":178.0,"det":69.7,"et":58.6,"flat":233.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":90,"ts":"2021-07-18 18:00:00+00:00","temp":20.39,"total":667.6,"mt":126.8,"sd":178.1,"det":69.7,"et":58.7,"flat":234.3,"hi":68.8,"md":58.5,"lo":46.9},{"t":91,"ts":"2021-07-18 19:00:00+00:00","temp":19.09,"total":672.1,"mt":127.6,"sd":179.0,"det":70.0,"et":59.2,"flat":236.3,"hi":71.1,"md":59.5,"lo":48.2},{"t":92,"ts":"2021-07-18 20:00:00+00:00","temp":18.46,"total":677.3,"mt":128.3,"sd":180.5,"det":70.3,"et":59.8,"flat":238.4,"hi":72.9,"md":60.8,"lo":49.9},{"t":93,"ts":"2021-07-18 21:00:00+00:00","temp":17.35,"total":764.9,"mt":147.2,"sd":202.3,"det":80.2,"et":66.8,"flat":268.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":94,"ts":"2021-07-18 22:00:00+00:00","temp":16.49,"total":872.1,"mt":170.2,"sd":231.4,"det":94.2,"et":75.8,"flat":300.6,"hi":74.7,"md":62.0,"lo":51.1},{"t":95,"ts":"2021-07-18 23:00:00+00:00","temp":15.97,"total":936.4,"mt":183.9,"sd":249.1,"det":102.6,"et":81.2,"flat":319.6,"hi":74.7,"md":62.0,"lo":51.1},{"t":96,"ts":"2021-07-19 00:00:00+00:00","temp":15.67,"total":973.4,"mt":191.8,"sd":259.3,"det":107.5,"et":84.4,"flat":330.4,"hi":74.7,"md":62.0,"lo":51.1},{"t":97,"ts":"2021-07-19 01:00:00+00:00","temp":15.55,"total":987.7,"mt":194.8,"sd":263.4,"det":109.5,"et":85.6,"flat":334.4,"hi":74.7,"md":62.0,"lo":51.1},{"t":98,"ts":"2021-07-19 02:00:00+00:00","temp":15.5,"total":993.5,"mt":196.1,"sd":265.1,"det":110.3,"et":86.2,"flat":335.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":99,"ts":"2021-07-19 03:00:00+00:00","temp":15.15,"total":1034.6,"mt":204.9,"sd":276.1,"det":115.5,"et":89.6,"flat":348.5,"hi":74.7,"md":62.0,"lo":51.1},{"t":100,"ts":"2021-07-19 04:00:00+00:00","temp":14.72,"total":1081.0,"mt":215.0,"sd":288.8,"det":121.9,"et":93.3,"flat":361.9,"hi":72.4,"md":60.4,"lo":49.9},{"t":101,"ts":"2021-07-19 05:00:00+00:00","temp":14.72,"total":1076.4,"mt":214.3,"sd":287.7,"det":121.6,"et":92.5,"flat":360.4,"hi":70.3,"md":58.9,"lo":49.0},{"t":102,"ts":"2021-07-19 06:00:00+00:00","temp":14.91,"total":1046.4,"mt":207.8,"sd":279.7,"det":118.3,"et":90.1,"flat":350.5,"hi":67.3,"md":56.3,"lo":47.4},{"t":103,"ts":"2021-07-19 07:00:00+00:00","temp":15.45,"total":936.9,"mt":185.2,"sd":250.8,"det":105.1,"et":80.0,"flat":315.8,"hi":53.3,"md":44.7,"lo":39.0},{"t":104,"ts":"2021-07-19 08:00:00+00:00","temp":16.93,"total":715.3,"mt":138.4,"sd":192.3,"det":77.9,"et":62.3,"flat":244.4,"hi":38.9,"md":33.5,"lo":30.0},{"t":105,"ts":"2021-07-19 09:00:00+00:00","temp":18.3,"total":564.5,"mt":107.3,"sd":151.8,"det":59.9,"et":50.8,"flat":194.8,"hi":26.7,"md":22.8,"lo":21.4},{"t":106,"ts":"2021-07-19 10:00:00+00:00","temp":19.43,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":107,"ts":"2021-07-19 11:00:00+00:00","temp":20.61,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":108,"ts":"2021-07-19 12:00:00+00:00","temp":21.49,"total":552.2,"mt":105.7,"sd":149.4,"det":59.2,"et":49.1,"flat":188.8,"hi":21.5,"md":19.7,"lo":17.6},{"t":109,"ts":"2021-07-19 13:00:00+00:00","temp":22.37,"total":570.5,"mt":109.6,"sd":154.0,"det":61.4,"et":51.1,"flat":194.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":110,"ts":"2021-07-19 14:00:00+00:00","temp":22.7,"total":589.8,"mt":112.9,"sd":159.3,"det":62.9,"et":52.9,"flat":201.9,"hi":37.3,"md":31.8,"lo":27.3},{"t":111,"ts":"2021-07-19 15:00:00+00:00","temp":22.81,"total":626.9,"mt":119.4,"sd":168.9,"det":66.4,"et":55.7,"flat":216.6,"hi":52.5,"md":44.2,"lo":36.9},{"t":112,"ts":"2021-07-19 16:00:00+00:00","temp":22.45,"total":648.2,"mt":123.3,"sd":173.6,"det":68.2,"et":57.4,"flat":225.6,"hi":61.3,"md":51.6,"lo":41.9},{"t":113,"ts":"2021-07-19 17:00:00+00:00","temp":21.88,"total":667.0,"mt":126.7,"sd":178.0,"det":69.7,"et":58.6,"flat":233.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":114,"ts":"2021-07-19 18:00:00+00:00","temp":21.13,"total":667.6,"mt":126.8,"sd":178.1,"det":69.7,"et":58.7,"flat":234.3,"hi":68.8,"md":58.5,"lo":46.9},{"t":115,"ts":"2021-07-19 19:00:00+00:00","temp":20.39,"total":672.1,"mt":127.6,"sd":179.0,"det":70.0,"et":59.2,"flat":236.3,"hi":71.1,"md":59.5,"lo":48.2},{"t":116,"ts":"2021-07-19 20:00:00+00:00","temp":19.33,"total":677.0,"mt":128.2,"sd":180.4,"det":70.3,"et":59.8,"flat":238.3,"hi":72.9,"md":60.8,"lo":49.9},{"t":117,"ts":"2021-07-19 21:00:00+00:00","temp":18.36,"total":681.4,"mt":128.9,"sd":181.5,"det":70.6,"et":60.4,"flat":240.0,"hi":74.7,"md":62.0,"lo":51.1},{"t":118,"ts":"2021-07-19 22:00:00+00:00","temp":17.38,"total":760.1,"mt":145.9,"sd":202.5,"det":80.6,"et":66.8,"flat":264.4,"hi":74.7,"md":62.0,"lo":51.1},{"t":119,"ts":"2021-07-19 23:00:00+00:00","temp":16.58,"total":860.9,"mt":167.6,"sd":229.5,"det":93.4,"et":75.2,"flat":295.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":120,"ts":"2021-07-20 00:00:00+00:00","temp":15.78,"total":960.0,"mt":188.9,"sd":255.9,"det":105.9,"et":83.3,"flat":326.0,"hi":74.7,"md":62.0,"lo":51.1},{"t":121,"ts":"2021-07-20 01:00:00+00:00","temp":15.92,"total":942.3,"mt":185.2,"sd":250.7,"det":103.5,"et":81.7,"flat":321.2,"hi":74.7,"md":62.0,"lo":51.1},{"t":122,"ts":"2021-07-20 02:00:00+00:00","temp":16.04,"total":927.2,"mt":181.8,"sd":247.4,"det":102.0,"et":80.7,"flat":315.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":123,"ts":"2021-07-20 03:00:00+00:00","temp":15.89,"total":945.8,"mt":185.8,"sd":252.3,"det":104.3,"et":82.2,"flat":321.2,"hi":74.7,"md":62.0,"lo":51.1},{"t":124,"ts":"2021-07-20 04:00:00+00:00","temp":15.67,"total":967.5,"mt":190.7,"sd":258.1,"det":107.3,"et":83.8,"flat":327.7,"hi":72.4,"md":60.4,"lo":49.9},{"t":125,"ts":"2021-07-20 05:00:00+00:00","temp":15.13,"total":1027.5,"mt":203.7,"sd":275.5,"det":115.8,"et":88.8,"flat":343.8,"hi":70.3,"md":58.9,"lo":49.0},{"t":126,"ts":"2021-07-20 06:00:00+00:00","temp":15.05,"total":1030.0,"mt":204.3,"sd":275.2,"det":116.0,"et":88.7,"flat":345.7,"hi":67.3,"md":56.3,"lo":47.4},{"t":127,"ts":"2021-07-20 07:00:00+00:00","temp":15.89,"total":885.4,"mt":174.2,"sd":236.8,"det":98.3,"et":75.7,"flat":300.4,"hi":53.3,"md":44.7,"lo":39.0},{"t":128,"ts":"2021-07-20 08:00:00+00:00","temp":17.44,"total":658.9,"mt":126.3,"sd":177.2,"det":70.9,"et":57.8,"flat":226.7,"hi":38.9,"md":33.5,"lo":30.0},{"t":129,"ts":"2021-07-20 09:00:00+00:00","temp":18.76,"total":564.4,"mt":107.3,"sd":151.8,"det":59.9,"et":50.8,"flat":194.7,"hi":26.7,"md":22.8,"lo":21.4},{"t":130,"ts":"2021-07-20 10:00:00+00:00","temp":20.26,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":131,"ts":"2021-07-20 11:00:00+00:00","temp":21.49,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":132,"ts":"2021-07-20 12:00:00+00:00","temp":22.49,"total":552.2,"mt":105.7,"sd":149.4,"det":59.2,"et":49.1,"flat":188.8,"hi":21.5,"md":19.7,"lo":17.6},{"t":133,"ts":"2021-07-20 13:00:00+00:00","temp":23.02,"total":570.5,"mt":109.6,"sd":154.0,"det":61.4,"et":51.1,"flat":194.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":134,"ts":"2021-07-20 14:00:00+00:00","temp":23.1,"total":589.8,"mt":112.9,"sd":159.3,"det":62.9,"et":52.9,"flat":201.9,"hi":37.3,"md":31.8,"lo":27.3},{"t":135,"ts":"2021-07-20 15:00:00+00:00","temp":21.93,"total":626.9,"mt":119.4,"sd":168.9,"det":66.4,"et":55.7,"flat":216.6,"hi":52.5,"md":44.2,"lo":36.9},{"t":136,"ts":"2021-07-20 16:00:00+00:00","temp":21.43,"total":648.2,"mt":123.3,"sd":173.6,"det":68.2,"et":57.4,"flat":225.6,"hi":61.3,"md":51.6,"lo":41.9},{"t":137,"ts":"2021-07-20 17:00:00+00:00","temp":20.88,"total":667.0,"mt":126.7,"sd":178.0,"det":69.7,"et":58.6,"flat":233.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":138,"ts":"2021-07-20 18:00:00+00:00","temp":20.11,"total":667.6,"mt":126.8,"sd":178.1,"det":69.7,"et":58.7,"flat":234.3,"hi":68.8,"md":58.5,"lo":46.9},{"t":139,"ts":"2021-07-20 19:00:00+00:00","temp":19.41,"total":672.1,"mt":127.6,"sd":179.0,"det":70.0,"et":59.2,"flat":236.3,"hi":71.1,"md":59.5,"lo":48.2},{"t":140,"ts":"2021-07-20 20:00:00+00:00","temp":18.64,"total":677.0,"mt":128.2,"sd":180.4,"det":70.3,"et":59.8,"flat":238.3,"hi":72.9,"md":60.8,"lo":49.9},{"t":141,"ts":"2021-07-20 21:00:00+00:00","temp":17.65,"total":725.8,"mt":138.4,"sd":193.8,"det":76.5,"et":64.2,"flat":252.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":142,"ts":"2021-07-20 22:00:00+00:00","temp":16.8,"total":833.4,"mt":161.6,"sd":222.6,"det":90.2,"et":73.0,"flat":286.0,"hi":74.7,"md":62.0,"lo":51.1},{"t":143,"ts":"2021-07-20 23:00:00+00:00","temp":16.13,"total":917.1,"mt":179.6,"sd":244.9,"det":100.8,"et":79.9,"flat":312.0,"hi":74.7,"md":62.0,"lo":51.1},{"t":144,"ts":"2021-07-21 00:00:00+00:00","temp":15.33,"total":1013.9,"mt":200.4,"sd":270.3,"det":112.7,"et":87.8,"flat":342.7,"hi":74.7,"md":62.0,"lo":51.1},{"t":145,"ts":"2021-07-21 01:00:00+00:00","temp":14.99,"total":1054.2,"mt":209.2,"sd":280.4,"det":117.3,"et":90.9,"flat":356.4,"hi":74.7,"md":62.0,"lo":51.1},{"t":146,"ts":"2021-07-21 02:00:00+00:00","temp":14.37,"total":1127.1,"mt":224.9,"sd":299.7,"det":126.4,"et":96.8,"flat":379.3,"hi":74.7,"md":62.0,"lo":51.1},{"t":147,"ts":"2021-07-21 03:00:00+00:00","temp":14.27,"total":1139.6,"mt":227.6,"sd":303.0,"det":128.0,"et":97.9,"flat":383.2,"hi":74.7,"md":62.0,"lo":51.1},{"t":148,"ts":"2021-07-21 04:00:00+00:00","temp":14.18,"total":1144.2,"mt":228.8,"sd":304.1,"det":128.8,"et":98.0,"flat":384.5,"hi":72.4,"md":60.4,"lo":49.9},{"t":149,"ts":"2021-07-21 05:00:00+00:00","temp":14.22,"total":1135.8,"mt":227.3,"sd":302.0,"det":128.0,"et":96.9,"flat":381.6,"hi":70.3,"md":58.9,"lo":49.0},{"t":150,"ts":"2021-07-21 06:00:00+00:00","temp":15.02,"total":1033.5,"mt":205.2,"sd":275.4,"det":116.1,"et":88.7,"flat":348.0,"hi":67.3,"md":56.3,"lo":47.4},{"t":151,"ts":"2021-07-21 07:00:00+00:00","temp":15.58,"total":921.2,"mt":181.8,"sd":246.9,"det":103.2,"et":78.8,"flat":310.5,"hi":53.3,"md":44.7,"lo":39.0},{"t":152,"ts":"2021-07-21 08:00:00+00:00","temp":16.33,"total":780.2,"mt":152.0,"sd":210.5,"det":86.3,"et":67.8,"flat":263.5,"hi":38.9,"md":33.5,"lo":30.0},{"t":153,"ts":"2021-07-21 09:00:00+00:00","temp":17.44,"total":615.9,"mt":118.2,"sd":165.8,"det":66.0,"et":55.3,"flat":210.6,"hi":26.7,"md":22.8,"lo":21.4},{"t":154,"ts":"2021-07-21 10:00:00+00:00","temp":18.65,"total":557.8,"mt":106.2,"sd":150.5,"det":59.6,"et":49.9,"flat":191.5,"hi":24.1,"md":21.0,"lo":19.2},{"t":155,"ts":"2021-07-21 11:00:00+00:00","temp":19.93,"total":554.8,"mt":106.0,"sd":149.8,"det":59.4,"et":49.5,"flat":190.1,"hi":22.6,"md":20.2,"lo":18.6},{"t":156,"ts":"2021-07-21 12:00:00+00:00","temp":21.25,"total":552.2,"mt":105.7,"sd":149.4,"det":59.2,"et":49.1,"flat":188.8,"hi":21.5,"md":19.7,"lo":17.6},{"t":157,"ts":"2021-07-21 13:00:00+00:00","temp":22.47,"total":570.5,"mt":109.6,"sd":154.0,"det":61.4,"et":51.1,"flat":194.4,"hi":29.1,"md":25.4,"lo":22.6},{"t":158,"ts":"2021-07-21 14:00:00+00:00","temp":23.51,"total":589.8,"mt":112.9,"sd":159.3,"det":62.9,"et":52.9,"flat":201.9,"hi":37.3,"md":31.8,"lo":27.3},{"t":159,"ts":"2021-07-21 15:00:00+00:00","temp":23.74,"total":626.9,"mt":119.4,"sd":168.9,"det":66.4,"et":55.7,"flat":216.6,"hi":52.5,"md":44.2,"lo":36.9},{"t":160,"ts":"2021-07-21 16:00:00+00:00","temp":23.68,"total":648.2,"mt":123.3,"sd":173.6,"det":68.2,"et":57.4,"flat":225.6,"hi":61.3,"md":51.6,"lo":41.9},{"t":161,"ts":"2021-07-21 17:00:00+00:00","temp":23.21,"total":667.0,"mt":126.7,"sd":178.0,"det":69.7,"et":58.6,"flat":233.9,"hi":68.6,"md":58.1,"lo":46.9},{"t":162,"ts":"2021-07-21 18:00:00+00:00","temp":22.4,"total":667.6,"mt":126.8,"sd":178.1,"det":69.7,"et":58.7,"flat":234.3,"hi":68.8,"md":58.5,"lo":46.9},{"t":163,"ts":"2021-07-21 19:00:00+00:00","temp":21.55,"total":672.1,"mt":127.6,"sd":179.0,"det":70.0,"et":59.2,"flat":236.3,"hi":71.1,"md":59.5,"lo":48.2},{"t":164,"ts":"2021-07-21 20:00:00+00:00","temp":20.73,"total":677.0,"mt":128.2,"sd":180.4,"det":70.3,"et":59.8,"flat":238.3,"hi":72.9,"md":60.8,"lo":49.9},{"t":165,"ts":"2021-07-21 21:00:00+00:00","temp":19.71,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":166,"ts":"2021-07-21 22:00:00+00:00","temp":18.65,"total":681.1,"mt":128.9,"sd":181.3,"det":70.6,"et":60.4,"flat":239.9,"hi":74.7,"md":62.0,"lo":51.1},{"t":167,"ts":"2021-07-21 23:00:00+00:00","temp":18.06,"total":681.7,"mt":128.9,"sd":181.6,"det":70.6,"et":60.4,"flat":240.1,"hi":74.7,"md":62.0,"lo":51.1},{"t":168,"ts":"2021-07-22 00:00:00+00:00","temp":17.5,"total":745.8,"mt":142.7,"sd":199.2,"det":79.1,"et":65.8,"flat":259.0,"hi":74.7,"md":62.0,"lo":51.1}]};
+
+const stepIds = ["overview","climate","synthpop","agents","smoke","animation","calibration","validation","scenarios","spatial","credits"];
+let currentStep = 0;
+
+function showStep(idx, push=true){
+  idx = Math.max(0, Math.min(stepIds.length-1, idx));
+  currentStep = idx;
+  document.querySelectorAll("section.step").forEach(s=>s.classList.remove("active"));
+  document.getElementById(stepIds[idx]).classList.add("active");
+  document.querySelectorAll("nav a").forEach(a=>{
+    a.classList.toggle("active", a.dataset.step===stepIds[idx]);
+  });
+  document.getElementById("stepCount").textContent = `Step ${idx+1} of ${stepIds.length}`;
+  document.getElementById("prevBtn").disabled = idx===0;
+  document.getElementById("nextBtn").disabled = idx===stepIds.length-1;
+  document.getElementById("progressbar").style.width = ((idx+1)/stepIds.length*100)+"%";
+  if(push) history.replaceState(null,"","#"+stepIds[idx]);
+  window.scrollTo({top:0,behavior:"smooth"});
+  setTimeout(()=>{
+    const id = stepIds[idx];
+    if(id==="overview") drawPipelineArrows();
+    if(id==="climate") drawClimate();
+    if(id==="smoke") drawSmoke();
+    if(id==="validation") drawDesnz();
+  },50);
+}
+document.querySelectorAll("nav a").forEach(a=>{
+  a.addEventListener("click",e=>{e.preventDefault();showStep(stepIds.indexOf(a.dataset.step));});
+});
+document.getElementById("prevBtn").addEventListener("click",()=>showStep(currentStep-1));
+document.getElementById("nextBtn").addEventListener("click",()=>showStep(currentStep+1));
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT") return;
+  if(e.key==="ArrowRight") showStep(currentStep+1);
+  if(e.key==="ArrowLeft") showStep(currentStep-1);
+  if(/^[1-9]$/.test(e.key)) showStep(parseInt(e.key,10)-1);
+});
+if(location.hash){
+  const idx = stepIds.indexOf(location.hash.slice(1));
+  if(idx>=0) showStep(idx,false);
+}
+
+const pipeDetails = {
+  epc:      '<span class="pd-tag">Data Input</span><strong>EPC Register.</strong> Every residential UPRN in Newcastle (97,714 dwellings) loaded with property type, floor area, SAP rating, age band, fuel type, and heating system. Geo-referenced as building polygons.',
+  census:   '<span class="pd-tag">Data Input</span><strong>Census 2021 + Understanding Society.</strong> Census marginals constrain the small-area distribution; Understanding Society provides the joint distribution of household income, tenure, schedule archetype, and education for the synthetic population.',
+  era5:     '<span class="pd-tag">Data Input</span><strong>Climate forcing (ERA5 + Climate-DT).</strong> Hourly 2 metre air temperature on a 0.1° lattice. ERA5 reanalysis from ECMWF supplies the 2020 to 2022 backcast for calibration and validation. Climate-DT projections from Destination Earth supply three SSP3-7.0 realisations (ICON, IFS-FESOM, IFS-NEMO) through 2039, which gives the demand forecast a climate uncertainty band.',
+  synthpop: '<span class="pd-tag">Simulation Model</span><strong>Synthetic Population.</strong> Households are matched to UPRNs (99.5% match rate) by Census 2021 marginals and HIDP attributes. The result: every dwelling carries coherent physical and social attributes.',
+  model:    '<span class="pd-tag">Simulation Model</span><strong>Household Energy MABM (Mesa-Geo).</strong> At every hourly tick, each PersonAgent updates its presence and each HouseholdAgent computes baseline + heating draw, scaled by SAP, floor area, and occupancy. A full year for 97,714 dwellings runs in roughly 25 minutes on a standard laptop.',
+  serl:     '<span class="pd-tag">Validation</span><strong>SERL Calibration.</strong> Parameters without an empirical anchor are fit against the SERL smart-meter panel: intraday profile shape, HDD-regression slopes, and the summer baseline anchor. Sequential Monte-Carlo with the DESNZ annual total as a soft constraint.',
+  desnz:    '<span class="pd-tag">Validation</span><strong>DESNZ Validation.</strong> Annual totals are checked against DESNZ sub-national energy statistics for 2021 to 2023. MAPE under 5% across the window; the model tracks inter-annual variation correctly.',
+  policy:   '<span class="pd-tag">Outputs</span><strong>Policy Outputs.</strong> Scenario trade-offs (aggregate vs. equity), bill savings by income quintile, and spatial benefit maps at ward level. The actionable output for local authorities and housing associations.'
+};
+document.querySelectorAll(".pipebox").forEach(n=>{
+  n.addEventListener("click",()=>{
+    document.querySelectorAll(".pipebox").forEach(x=>x.classList.remove("active"));
+    n.classList.add("active");
+    document.getElementById("pipedetail").innerHTML = pipeDetails[n.dataset.pipe];
+  });
+});
+
+/* Pipeline flow arrows: draw real connections between specific boxes */
+function drawPipelineArrows(){
+  const svg = document.getElementById("pipearrows");
+  if(!svg) return;
+  const wrap = svg.parentElement;
+  if(!wrap || wrap.offsetWidth === 0) return;  // not visible yet
+
+  const w = wrap.offsetWidth, h = wrap.offsetHeight;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+
+  // Remove any existing connector paths (preserve <defs><marker>...</marker></defs>)
+  svg.querySelectorAll("path").forEach(p => {
+    let parent = p.parentNode;
+    while(parent && parent !== svg){
+      if(parent.tagName && parent.tagName.toLowerCase() === "marker") return;  // keep marker arrowheads
+      parent = parent.parentNode;
+    }
+    p.remove();
+  });
+
+  const wr = wrap.getBoundingClientRect();
+  function anchor(id, side, vfrac){
+    const el = document.getElementById(id); if(!el) return null;
+    const r = el.getBoundingClientRect();
+    const y = r.top - wr.top + r.height * (vfrac == null ? 0.5 : vfrac);
+    const x = side === "left" ? r.left - wr.left : (side === "right" ? r.right - wr.left : (r.left + r.right)/2 - wr.left);
+    return {x, y};
+  }
+
+  function hCurve(from, to, cls){
+    const dx = to.x - from.x;
+    const c1x = from.x + Math.max(32, Math.abs(dx)*0.55);
+    const c2x = to.x   - Math.max(32, Math.abs(dx)*0.55);
+    const path = document.createElementNS("http://www.w3.org/2000/svg","path");
+    path.setAttribute("d", `M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x - 8} ${to.y}`);
+    path.setAttribute("class", cls);
+    const m = cls.includes("input") ? "ar-input" : cls.includes("model") ? "ar-model" : "ar-output";
+    path.setAttribute("marker-end", `url(#${m})`);
+    svg.appendChild(path);
+  }
+
+  // Vertical curve within a column (SERL -> DESNZ): bend right then back left.
+  function vCurve(from, to, cls){
+    const offset = 22;
+    const path = document.createElementNS("http://www.w3.org/2000/svg","path");
+    path.setAttribute("d", `M ${from.x - 14} ${from.y} C ${from.x + offset} ${from.y + 10}, ${to.x + offset} ${to.y - 10}, ${to.x - 6} ${to.y - 8}`);
+    path.setAttribute("class", cls);
+    const m = cls.includes("input") ? "ar-input" : cls.includes("model") ? "ar-model" : "ar-output";
+    path.setAttribute("marker-end", `url(#${m})`);
+    svg.appendChild(path);
+  }
+
+  // The actual data flow:
+  //   EPC, Census -> Synthetic Population
+  hCurve(anchor("box-epc","right"),      anchor("box-synthpop","left"), "flow-input");
+  hCurve(anchor("box-census","right"),   anchor("box-synthpop","left"), "flow-input");
+  //   Synthetic Population -> MABM (within model column, vertical-ish)
+  const sp = anchor("box-synthpop","center", 1);  // bottom-centre of synthpop
+  const md = anchor("box-model","center", 0);     // top-centre of model
+  if(sp && md){
+    const p = document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("d", `M ${sp.x} ${sp.y} L ${md.x} ${md.y - 8}`);
+    p.setAttribute("class", "flow-model");
+    p.setAttribute("marker-end", "url(#ar-model)");
+    svg.appendChild(p);
+  }
+  //   ERA5 -> MABM (skipping synthpop)
+  hCurve(anchor("box-era5","right"),     anchor("box-model","left"),    "flow-input");
+  //   MABM -> SERL Calibration
+  hCurve(anchor("box-model","right"),    anchor("box-serl","left"),     "flow-output");
+  //   SERL Calibration -> DESNZ Validation (vertical within output column)
+  const serlBottom = anchor("box-serl","center", 1);
+  const desnzTop = anchor("box-desnz","center", 0);
+  if(serlBottom && desnzTop){
+    const p = document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("d", `M ${serlBottom.x} ${serlBottom.y} L ${desnzTop.x} ${desnzTop.y - 8}`);
+    p.setAttribute("class", "flow-output");
+    p.setAttribute("marker-end", "url(#ar-output)");
+    svg.appendChild(p);
+  }
+  //   MABM -> Policy Outputs
+  hCurve(anchor("box-model","right"),    anchor("box-policy","left"),   "flow-output");
+}
+
+window.addEventListener("resize", () => drawPipelineArrows());
+setTimeout(drawPipelineArrows, 80);
+
+function chartOpts({yTitle,xTick}={}){
+  const tickC="#5C5C5C", gridC="#E8E2DC", titleC="#1A1A1A";
+  return {
+    responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
+    plugins:{
+      legend:{labels:{color:tickC,font:{size:11,family:'Calibri,Inter,sans-serif'},boxWidth:12}},
+      tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:titleC,bodyColor:"#5C5C5C",titleFont:{family:'Georgia',weight:'bold'},displayColors:true}
+    },
+    scales:{
+      x:{ticks:{color:tickC,font:{size:11},maxRotation:0,autoSkip:true,maxTicksLimit:xTick||12},grid:{color:gridC}},
+      y:{ticks:{color:tickC,font:{size:11}},grid:{color:gridC},title:{display:!!yTitle,text:yTitle,color:tickC,font:{size:11}}}
+    }
+  };
+}
+
+let climateChart;
+function makeAnnualSeasonal(){
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const mean = [3.5,3.8,5.6,7.8,10.6,13.4,15.3,15.1,12.9,9.8,6.3,4.2];
+  const lo =   [-1.1,-1.0,0.8,2.6,5.5,8.4,10.5,10.4,8.0,4.8,1.4,-0.4];
+  const hi =   [7.5,7.8,9.9,12.7,15.9,18.4,20.2,20.0,17.5,14.0,10.6,8.4];
+  return {months,mean,lo,hi};
+}
+function drawClimate(){
+  const mode = document.querySelector("[data-clim].on").dataset.clim;
+  const chartView = document.getElementById("climateChartView");
+  const mapView = document.getElementById("climateMapView");
+  if(chartView && mapView){
+    if(mode === "map"){
+      chartView.style.display = "none";
+      mapView.style.display = "";
+      drawClimateMap();
+      return;
+    } else {
+      chartView.style.display = "";
+      mapView.style.display = "none";
+    }
+  }
+  const ctx = document.getElementById("climateChart"); if(!ctx) return;
+  if(climateChart) climateChart.destroy();
+  if(mode==="year"){
+    const {months,mean,lo,hi} = makeAnnualSeasonal();
+    climateChart = new Chart(ctx,{type:"line",data:{labels:months,datasets:[
+      {label:"Daily max (mean)",data:hi,borderColor:"#E8521A",tension:.35,pointRadius:0,borderWidth:2},
+      {label:"Daily mean",data:mean,borderColor:"#1A1C1B",backgroundColor:"rgba(232,82,26,.12)",fill:true,tension:.35,pointRadius:0,borderWidth:2.5},
+      {label:"Daily min (mean)",data:lo,borderColor:"#5C5C5C",tension:.35,pointRadius:0,borderWidth:1.5,borderDash:[4,4]}
+    ]},options:chartOpts({yTitle:"°C"})});
+  } else {
+    const arr = SMOKE[mode];
+    const labels = arr.map(r=>{const d=new Date(r.ts.replace(" ","T"));return d.toLocaleString("en-GB",{weekday:"short",hour:"2-digit"});});
+    const temps = arr.map(r=>r.temp);
+    climateChart = new Chart(ctx,{type:"line",data:{labels,datasets:[
+      {label:"Outdoor temp (°C)",data:temps,borderColor:"#E8521A",backgroundColor:"rgba(232,82,26,.18)",fill:true,tension:.25,pointRadius:0,borderWidth:2}
+    ]},options:chartOpts({yTitle:"°C",xTick:6})});
+  }
+}
+document.querySelectorAll("[data-clim]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll("[data-clim]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); drawClimate();
+  });
+});
+
+/* CLIMATE GRID-POINT MAP */
+const CLIMATE_SNAPSHOTS = {"cold_morning":{"label":"8 Jan 2010, 06:00 \u2014 coldest morning on record","mean":-10.439949989318848,"points":[{"lat":54.79999923706055,"lon":-1.899999976158142,"temp":-11.4},{"lat":54.79999923706055,"lon":-1.7999999523162842,"temp":-10.8},{"lat":54.79999923706055,"lon":-1.7000000476837158,"temp":-10.8},{"lat":54.79999923706055,"lon":-1.600000023841858,"temp":-11.0},{"lat":54.79999923706055,"lon":-1.5,"temp":-10.5},{"lat":54.79999923706055,"lon":-1.399999976158142,"temp":-10.2},{"lat":54.900001525878906,"lon":-1.899999976158142,"temp":-11.8},{"lat":54.900001525878906,"lon":-1.7999999523162842,"temp":-10.3},{"lat":54.900001525878906,"lon":-1.7000000476837158,"temp":-10.2},{"lat":54.900001525878906,"lon":-1.600000023841858,"temp":-10.8},{"lat":54.900001525878906,"lon":-1.5,"temp":-10.2},{"lat":54.900001525878906,"lon":-1.399999976158142,"temp":-9.9},{"lat":55.0,"lon":-1.899999976158142,"temp":-12.1},{"lat":55.0,"lon":-1.7999999523162842,"temp":-11.3},{"lat":55.0,"lon":-1.7000000476837158,"temp":-10.3},{"lat":55.0,"lon":-1.600000023841858,"temp":-9.7},{"lat":55.0,"lon":-1.5,"temp":-8.9},{"lat":55.0,"lon":-1.399999976158142,"temp":-8.5},{"lat":55.099998474121094,"lon":-1.899999976158142,"temp":-11.9},{"lat":55.099998474121094,"lon":-1.7999999523162842,"temp":-11.0},{"lat":55.099998474121094,"lon":-1.7000000476837158,"temp":-9.5},{"lat":55.099998474121094,"lon":-1.600000023841858,"temp":-8.6}]},"beast":{"label":"1 Mar 2018, dawn \u2014 Beast from the East","mean":-3.7669260501861572,"points":[{"lat":54.79999923706055,"lon":-1.899999976158142,"temp":-5.8},{"lat":54.79999923706055,"lon":-1.7999999523162842,"temp":-5.3},{"lat":54.79999923706055,"lon":-1.7000000476837158,"temp":-4.8},{"lat":54.79999923706055,"lon":-1.600000023841858,"temp":-4.3},{"lat":54.79999923706055,"lon":-1.5,"temp":-3.8},{"lat":54.79999923706055,"lon":-1.399999976158142,"temp":-3.3},{"lat":54.900001525878906,"lon":-1.899999976158142,"temp":-5.0},{"lat":54.900001525878906,"lon":-1.7999999523162842,"temp":-4.7},{"lat":54.900001525878906,"lon":-1.7000000476837158,"temp":-4.2},{"lat":54.900001525878906,"lon":-1.600000023841858,"temp":-3.6},{"lat":54.900001525878906,"lon":-1.5,"temp":-3.2},{"lat":54.900001525878906,"lon":-1.399999976158142,"temp":-2.8},{"lat":55.0,"lon":-1.899999976158142,"temp":-4.1},{"lat":55.0,"lon":-1.7999999523162842,"temp":-3.9},{"lat":55.0,"lon":-1.7000000476837158,"temp":-3.4},{"lat":55.0,"lon":-1.600000023841858,"temp":-2.9},{"lat":55.0,"lon":-1.5,"temp":-2.5},{"lat":55.0,"lon":-1.399999976158142,"temp":-2.3},{"lat":55.099998474121094,"lon":-1.899999976158142,"temp":-3.9},{"lat":55.099998474121094,"lon":-1.7999999523162842,"temp":-3.5},{"lat":55.099998474121094,"lon":-1.7000000476837158,"temp":-3.0},{"lat":55.099998474121094,"lon":-1.600000023841858,"temp":-2.6}]},"typical_winter":{"label":"22 Jan 2014 02:00 \u2014 typical winter night","mean":3.5756890773773193,"points":[{"lat":54.79999923706055,"lon":-1.899999976158142,"temp":2.7},{"lat":54.79999923706055,"lon":-1.7999999523162842,"temp":2.9},{"lat":54.79999923706055,"lon":-1.7000000476837158,"temp":3.2},{"lat":54.79999923706055,"lon":-1.600000023841858,"temp":3.5},{"lat":54.79999923706055,"lon":-1.5,"temp":3.8},{"lat":54.79999923706055,"lon":-1.399999976158142,"temp":4.0},{"lat":54.900001525878906,"lon":-1.899999976158142,"temp":3.0},{"lat":54.900001525878906,"lon":-1.7999999523162842,"temp":3.1},{"lat":54.900001525878906,"lon":-1.7000000476837158,"temp":3.4},{"lat":54.900001525878906,"lon":-1.600000023841858,"temp":3.7},{"lat":54.900001525878906,"lon":-1.5,"temp":4.0},{"lat":54.900001525878906,"lon":-1.399999976158142,"temp":4.2},{"lat":55.0,"lon":-1.899999976158142,"temp":3.2},{"lat":55.0,"lon":-1.7999999523162842,"temp":3.3},{"lat":55.0,"lon":-1.7000000476837158,"temp":3.7},{"lat":55.0,"lon":-1.600000023841858,"temp":4.0},{"lat":55.0,"lon":-1.5,"temp":4.2},{"lat":55.0,"lon":-1.399999976158142,"temp":4.4},{"lat":55.099998474121094,"lon":-1.899999976158142,"temp":3.2},{"lat":55.099998474121094,"lon":-1.7999999523162842,"temp":3.3},{"lat":55.099998474121094,"lon":-1.7000000476837158,"temp":3.7},{"lat":55.099998474121094,"lon":-1.600000023841858,"temp":4.0}]},"hot_summer":{"label":"19 Jul 2022 16:00 \u2014 hottest summer afternoon","mean":33.3785400390625,"points":[{"lat":54.79999923706055,"lon":-1.899999976158142,"temp":32.2},{"lat":54.79999923706055,"lon":-1.7999999523162842,"temp":32.7},{"lat":54.79999923706055,"lon":-1.7000000476837158,"temp":33.1},{"lat":54.79999923706055,"lon":-1.600000023841858,"temp":33.4},{"lat":54.79999923706055,"lon":-1.5,"temp":34.2},{"lat":54.79999923706055,"lon":-1.399999976158142,"temp":34.8},{"lat":54.900001525878906,"lon":-1.899999976158142,"temp":32.9},{"lat":54.900001525878906,"lon":-1.7999999523162842,"temp":33.3},{"lat":54.900001525878906,"lon":-1.7000000476837158,"temp":33.6},{"lat":54.900001525878906,"lon":-1.600000023841858,"temp":33.9},{"lat":54.900001525878906,"lon":-1.5,"temp":34.2},{"lat":54.900001525878906,"lon":-1.399999976158142,"temp":34.6},{"lat":55.0,"lon":-1.899999976158142,"temp":33.0},{"lat":55.0,"lon":-1.7999999523162842,"temp":33.5},{"lat":55.0,"lon":-1.7000000476837158,"temp":33.8},{"lat":55.0,"lon":-1.600000023841858,"temp":34.0},{"lat":55.0,"lon":-1.5,"temp":33.6},{"lat":55.0,"lon":-1.399999976158142,"temp":33.5},{"lat":55.099998474121094,"lon":-1.899999976158142,"temp":32.3},{"lat":55.099998474121094,"lon":-1.7999999523162842,"temp":32.6},{"lat":55.099998474121094,"lon":-1.7000000476837158,"temp":32.5},{"lat":55.099998474121094,"lon":-1.600000023841858,"temp":32.9}]}};
+const NEWCASTLE_SILHOUETTE = {"silhouette":{"type":"Polygon","coords":[[-1.6973,54.9781],[-1.7038,54.9725],[-1.713,54.9732],[-1.7365,54.9816],[-1.7662,54.981],[-1.7744,54.9967],[-1.7702,55.0034],[-1.7569,55.014],[-1.7127,55.0366],[-1.6829,55.0365],[-1.6901,55.0536],[-1.6863,55.0606],[-1.6455,55.0772],[-1.6404,55.0704],[-1.6303,55.0408],[-1.6045,55.0409],[-1.5925,55.0335],[-1.594,55.0225],[-1.6012,55.0107],[-1.5789,55.0104],[-1.5771,55.0066],[-1.5725,55.0075],[-1.5589,55.0023],[-1.5596,54.9966],[-1.5653,54.994],[-1.5632,54.9919],[-1.5475,54.9931],[-1.5376,54.9871],[-1.5399,54.9665],[-1.549,54.9618],[-1.5563,54.9613],[-1.5662,54.9647],[-1.579,54.9648],[-1.5892,54.9712],[-1.6013,54.9703],[-1.6157,54.9643],[-1.6352,54.9626],[-1.6607,54.9647],[-1.6922,54.9691],[-1.6973,54.9781]]},"bounds":{"lon_min":-1.7744235116860998,"lat_min":54.961318368731746,"lon_max":-1.5376214150670453,"lat_max":55.07720757960127}};
+let activeClimateSnap = "beast";
+
+function drawClimateMap(){
+  const svg = document.getElementById("climateMapSvg");
+  if(!svg) return;
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const W = 600, H = 340;
+  // Determine bounds from the full ERA5 grid (all 28 lon/lat combos), not just the silhouette
+  // We use the snapshot's points, plus the silhouette bounds, plus a 0.1° pad
+  const snap = CLIMATE_SNAPSHOTS[activeClimateSnap];
+  if(!snap) return;
+  let lons = snap.points.map(p=>p.lon), lats = snap.points.map(p=>p.lat);
+  // also include silhouette
+  const sil = NEWCASTLE_SILHOUETTE.silhouette;
+  if(sil.type === "Polygon"){
+    sil.coords.forEach(([x,y])=>{ lons.push(x); lats.push(y); });
+  } else if(sil.type === "MultiPolygon"){
+    sil.polys.forEach(poly => poly.forEach(([x,y])=>{ lons.push(x); lats.push(y); }));
+  }
+  const lonMin = Math.min(...lons) - 0.03, lonMax = Math.max(...lons) + 0.03;
+  const latMin = Math.min(...lats) - 0.02, latMax = Math.max(...lats) + 0.02;
+  const pad = 24;
+  const projW = W - 2*pad, projH = H - 2*pad - 30; // room for legend
+  // Equal-aspect: ensure 1° lat ≈ 1° lon × cos(meanLat) for visual correctness
+  const meanLat = (latMin+latMax)/2;
+  const lonScale = projW / (lonMax - lonMin);
+  const latScale = projH / (latMax - latMin);
+  // Use the smaller scale, applying cosine correction so the map isn't horizontally stretched
+  const lonCos = Math.cos(meanLat * Math.PI/180);
+  const scale = Math.min(lonScale * lonCos, latScale);
+  const drawW = (lonMax - lonMin) * scale / lonCos;
+  const drawH = (latMax - latMin) * scale;
+  const offX = pad + (projW - drawW)/2;
+  const offY = pad + (projH - drawH)/2;
+  function project(lon, lat){
+    return {
+      x: offX + (lon - lonMin) * scale / lonCos,
+      y: offY + (latMax - lat) * scale
+    };
+  }
+  function el(tag, attrs){
+    const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for(const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  // Background, North Sea hint (right edge gradient)
+  const grad = el("defs",{});
+  grad.innerHTML = `<linearGradient id="seaGrad" x1="0" x2="1" y1="0" y2="0">
+    <stop offset="0%" stop-color="#FAFAF8" stop-opacity="0"/>
+    <stop offset="80%" stop-color="#cfdde9" stop-opacity="0"/>
+    <stop offset="100%" stop-color="#a8c4d8" stop-opacity="0.55"/>
+  </linearGradient>`;
+  svg.appendChild(grad);
+  svg.appendChild(el("rect",{x:0,y:0,width:W,height:H,fill:"url(#seaGrad)"}));
+
+  // Sea label
+  const seaTxt = el("text",{x:W-12,y:H-44,"text-anchor":"end","font-family":"Georgia","font-size":11,"font-style":"italic",fill:"#6a8aa3"});
+  seaTxt.textContent = "North Sea →";
+  svg.appendChild(seaTxt);
+
+  // Newcastle silhouette
+  function polyPath(coords){
+    return "M " + coords.map(([lon,lat])=>{
+      const p = project(lon,lat);
+      return p.x.toFixed(1)+","+p.y.toFixed(1);
+    }).join(" L ") + " Z";
+  }
+  if(sil.type === "Polygon"){
+    svg.appendChild(el("path",{d:polyPath(sil.coords), fill:"#F3F0ED", stroke:"#9A8E80", "stroke-width":1.2, "stroke-dasharray":"3 3"}));
+  } else if(sil.type === "MultiPolygon"){
+    sil.polys.forEach(poly=>{
+      svg.appendChild(el("path",{d:polyPath(poly), fill:"#F3F0ED", stroke:"#9A8E80", "stroke-width":1.2, "stroke-dasharray":"3 3"}));
+    });
+  }
+  // Newcastle label
+  const cityLabel = el("text",{x:offX+8, y:offY+18, "font-family":"Georgia","font-size":12,"font-weight":"bold",fill:"#5C5C5C"});
+  cityLabel.textContent = "Newcastle upon Tyne";
+  svg.appendChild(cityLabel);
+
+  // Temperature → colour scale
+  // Use a fixed scale across snapshots so they're comparable
+  const allTemps = [].concat(...Object.values(CLIMATE_SNAPSHOTS).map(s=>s.points.map(p=>p.temp)));
+  const globalMin = Math.min(...allTemps), globalMax = Math.max(...allTemps);
+  // But for visual contrast, scale each snapshot's circle colours based on its own range
+  const snapTemps = snap.points.map(p=>p.temp);
+  const tMin = Math.min(...snapTemps), tMax = Math.max(...snapTemps);
+  function colourFor(t){
+    // Cold ramp (deep blue → mid teal → off-white) for cold; warm ramp (peach → orange → deep red) for warm
+    if(t < 5){
+      // map t from tMin..tMax to 0..1
+      const r = tMax === tMin ? 0.5 : (t - tMin)/(tMax - tMin);
+      // colder = deeper blue
+      const colours = ["#1c4f7a","#3b6997","#5e8fb8","#85aacb","#b0c8dc"];
+      return colours[Math.min(colours.length-1, Math.floor((1-r)*colours.length))];
+    } else if(t < 18){
+      // mild, neutral peach scale
+      const r = tMax === tMin ? 0.5 : (t - tMin)/(tMax - tMin);
+      const colours = ["#cad8c0","#dadbb8","#e9d2a3","#f2b384","#e58c5d"];
+      return colours[Math.min(colours.length-1, Math.floor(r*colours.length))];
+    } else {
+      // warm, orange ramp
+      const r = tMax === tMin ? 0.5 : (t - tMin)/(tMax - tMin);
+      const colours = ["#f4a07a","#ee835c","#e8521a","#c8431a","#9c361a"];
+      return colours[Math.min(colours.length-1, Math.floor(r*colours.length))];
+    }
+  }
+
+  // Faint grid lines connecting points to show ERA5 0.1° lattice
+  const lonsUnique = Array.from(new Set(snap.points.map(p=>p.lon))).sort((a,b)=>a-b);
+  const latsUnique = Array.from(new Set(snap.points.map(p=>p.lat))).sort((a,b)=>a-b);
+  lonsUnique.forEach(lon=>{
+    const p1 = project(lon, Math.min(...latsUnique));
+    const p2 = project(lon, Math.max(...latsUnique));
+    svg.appendChild(el("line",{x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,stroke:"#D8D0C8","stroke-width":0.6,"stroke-dasharray":"1 4",opacity:0.5}));
+  });
+  latsUnique.forEach(lat=>{
+    const p1 = project(Math.min(...lonsUnique), lat);
+    const p2 = project(Math.max(...lonsUnique), lat);
+    svg.appendChild(el("line",{x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,stroke:"#D8D0C8","stroke-width":0.6,"stroke-dasharray":"1 4",opacity:0.5}));
+  });
+
+  // Climate grid points
+  snap.points.forEach(p => {
+    const xy = project(p.lon, p.lat);
+    const grp = el("g",{});
+    grp.appendChild(el("circle",{cx:xy.x, cy:xy.y, r:22, fill:colourFor(p.temp), stroke:"#1A1A1A","stroke-width":0.8, opacity:0.92}));
+    const txt = el("text",{x:xy.x, y:xy.y+4, "text-anchor":"middle", "font-family":"Georgia","font-size":12, "font-weight":"bold", fill: p.temp < 0 || p.temp > 25 ? "#fff" : "#1A1A1A"});
+    txt.textContent = (p.temp >= 0 ? "+" : "") + p.temp.toFixed(1) + "°";
+    grp.appendChild(txt);
+    // Title for hover
+    const title = el("title",{});
+    title.textContent = `${p.lat.toFixed(2)}°N, ${p.lon.toFixed(2)}°W, ${p.temp.toFixed(1)}°C`;
+    grp.appendChild(title);
+    svg.appendChild(grp);
+  });
+
+  // Snapshot label box bottom-left
+  const meta = el("g",{});
+  const mLabel = el("text",{x:14, y:H-12, "font-family":"Georgia","font-size":12,"font-weight":"bold",fill:"#1A1A1A"});
+  mLabel.textContent = snap.label;
+  meta.appendChild(mLabel);
+  const mMean = el("text",{x:14, y:H-28, "font-family":"Calibri","font-size":10.5,fill:"#5C5C5C"});
+  mMean.textContent = `City mean ${snap.mean >= 0 ? "+" : ""}${snap.mean.toFixed(1)}°C  ·  range ${(tMax - tMin).toFixed(1)}°C across the city`;
+  meta.appendChild(mMean);
+  svg.appendChild(meta);
+
+  // Compass / N indicator
+  const compass = el("g",{transform:`translate(${W-44},${H-46})`});
+  compass.appendChild(el("line",{x1:8,y1:0,x2:8,y2:18,stroke:"#5C5C5C","stroke-width":1.2}));
+  const arrow = el("path",{d:"M 8,-3 L 13,5 L 3,5 Z", fill:"#5C5C5C"});
+  compass.appendChild(arrow);
+  const nT = el("text",{x:8,y:30,"text-anchor":"middle","font-family":"Georgia","font-size":11,"font-weight":"bold",fill:"#5C5C5C"});
+  nT.textContent = "N";
+  compass.appendChild(nT);
+  svg.appendChild(compass);
+}
+
+document.querySelectorAll("[data-clim-snap]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll("[data-clim-snap]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    activeClimateSnap = b.dataset.climSnap;
+    drawClimateMap();
+  });
+});
+
+const spopMap = {
+  attributes:{src:"abm_demo_assets/synth_pop_attributes.png",cap:"Joint distributions of dwelling attributes (property type, SAP, floor area) across the 97,714-dwelling synthetic population."},
+  dwelling_size:{src:"abm_demo_assets/synth_pop_dwelling_size.png",cap:"Dwelling type and household size across the modelled population. Flats and two-person households dominate; the long tail in both shapes the heating-demand distribution."}
+};
+document.querySelectorAll("[data-spop]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll("[data-spop]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    const key = b.dataset.spop;
+    const spatial = document.getElementById("spopSpatialCard");
+    const stat    = document.getElementById("spopStaticCard");
+    if(key === "spatial"){
+      spatial.style.display = "";
+      stat.style.display = "none";
+      return;
+    }
+    spatial.style.display = "none";
+    stat.style.display = "";
+    const v = spopMap[key];
+    document.getElementById("spopImg").src = v.src;
+    document.getElementById("spopCap").textContent = v.cap;
+  });
+});
+
+function recompute(){
+  const T = parseFloat(document.getElementById("aT").value);
+  const SAP = parseFloat(document.getElementById("aSAP").value);
+  const A = parseFloat(document.getElementById("aArea").value);
+  const occ = parseFloat(document.getElementById("aOcc").value);
+  const w = parseFloat(document.getElementById("aWealth").value);
+
+  document.getElementById("aTv").textContent = (T<0?"−"+Math.abs(T):T) + " °C";
+  document.getElementById("aSAPv").textContent = SAP;
+  document.getElementById("aAreav").textContent = A + " m²";
+  document.getElementById("aOccv").textContent = occ;
+
+  const areaMult = Math.min(1.25, Math.max(0.85, Math.pow(A/70.0, 0.20)));
+  const baseline = 0.4 * areaMult;
+  const occLoad = occ * 0.06 * 0.85 * w;
+  const Tset = 18.5, db = 0.5;
+  const sapFactor = Math.max(0.25, (90 - SAP) / 50);
+  const areaFactor = Math.pow(A/85.0, 0.6);
+  const occFactor = occ === 0 ? 0.55 : 1.0;
+  const k = 0.20;
+  const heating = k * Math.max(0, (Tset - T - db)) * sapFactor * areaFactor * occFactor;
+  const total = baseline + occLoad + heating;
+
+  document.getElementById("rBase").innerHTML = baseline.toFixed(2)+'<span class="ru">kWh/h</span>';
+  document.getElementById("rOcc").innerHTML  = occLoad.toFixed(2)+'<span class="ru">kWh/h</span>';
+  document.getElementById("rHeat").innerHTML = heating.toFixed(2)+'<span class="ru">kWh/h</span>';
+  document.getElementById("rTot").innerHTML  = total.toFixed(2)+'<span class="ru">kWh</span>';
+
+  const stage = document.getElementById("houseStage");
+  const badge = document.getElementById("houseBadge");
+  stage.classList.remove("cold","hot");
+  let label, badgeClass="";
+  if(T <= 6){ stage.classList.add("cold"); label = (T<0?"−"+Math.abs(T):T)+" °C · winter"; badgeClass="cool"; }
+  else if(T >= 20){ stage.classList.add("hot"); label = T+" °C · summer"; badgeClass="warm"; }
+  else { label = T+" °C · mild"; }
+  badge.className = "badge " + badgeClass;
+  badge.textContent = label;
+
+  document.getElementById("snowGroup").style.opacity = (T <= 4) ? "1" : "0";
+  document.getElementById("sunGroup").style.opacity = (T >= 18) ? "1" : "0";
+
+  const ppl = ["p1","p2","p3","p4"];
+  ppl.forEach((id,i)=>{
+    document.getElementById(id).style.opacity = (i < occ) ? "1" : "0";
+  });
+
+  const glowOpacity = Math.min(1, heating/4);
+  document.getElementById("glowL").style.opacity = glowOpacity;
+  document.getElementById("glowR").style.opacity = glowOpacity;
+  document.getElementById("radGlow").style.opacity = glowOpacity;
+  document.getElementById("heatLines").style.opacity = Math.min(1, heating/2);
+  document.getElementById("smokeGroup").style.opacity = (heating > 0.5) ? "1" : "0";
+
+  const tNorm = Math.max(0, Math.min(1, (30 - T)/40));
+  const fillY = 6 + tNorm * 90;
+  const fillH = 96 - fillY;
+  const fill = document.getElementById("thermoFill");
+  fill.setAttribute("y", fillY);
+  fill.setAttribute("height", Math.max(2, fillH));
+  const tColor = T <= 5 ? "#5E8FB8" : (T >= 22 ? "#E8521A" : "#7a9caa");
+  fill.setAttribute("fill", tColor);
+  document.querySelector("#thermo circle").setAttribute("fill", tColor);
+}
+["aT","aSAP","aArea","aOcc","aWealth"].forEach(id=>{
+  document.getElementById(id).addEventListener("input",recompute);
+});
+recompute();
+
+let smokeChart;
+let smokeSeason = "winter";
+let smokeBreakdown = "total";
+let smokeTemp = true;
+
+const TYPE_COLORS = {mt:"#E8521A",sd:"#F4A07A",det:"#1A1C1B",et:"#5C5C5C",flat:"#8a8580"};
+const TYPE_LABELS = {mt:"Mid-terraced",sd:"Semi-detached",det:"Detached",et:"End-terraced",flat:"Flats"};
+const WEALTH_COLORS = {hi:"#E8521A",md:"#F4A07A",lo:"#5C5C5C"};
+const WEALTH_LABELS = {hi:"High income",md:"Medium",lo:"Low income"};
+
+function drawSmoke(){
+  const ctx = document.getElementById("smokeChart"); if(!ctx) return;
+  const arr = SMOKE[smokeSeason];
+  const labels = arr.map(r=>{
+    const d = new Date(r.ts.replace(" ","T"));
+    const day = d.toLocaleString("en-GB",{weekday:"short"});
+    const h = d.getHours().toString().padStart(2,"0");
+    return h==="00" ? day : (h==="12"?h+":00":"");
+  });
+  const datasets = [];
+  if(smokeBreakdown==="total"){
+    datasets.push({label:"Total demand (kWh)",data:arr.map(r=>r.total),borderColor:"#E8521A",backgroundColor:"rgba(232,82,26,.15)",fill:true,tension:.25,pointRadius:0,borderWidth:2,yAxisID:"y"});
+  } else if(smokeBreakdown==="type"){
+    Object.keys(TYPE_COLORS).forEach(k=>{
+      datasets.push({label:TYPE_LABELS[k],data:arr.map(r=>r[k]),borderColor:TYPE_COLORS[k],fill:false,tension:.25,pointRadius:0,borderWidth:1.8,yAxisID:"y"});
+    });
+  } else if(smokeBreakdown==="wealth"){
+    Object.keys(WEALTH_COLORS).forEach(k=>{
+      datasets.push({label:WEALTH_LABELS[k],data:arr.map(r=>r[k]),borderColor:WEALTH_COLORS[k],fill:false,tension:.25,pointRadius:0,borderWidth:1.8,yAxisID:"y"});
+    });
+  }
+  if(smokeTemp){
+    datasets.push({label:"Outdoor temp (°C)",data:arr.map(r=>r.temp),borderColor:"#1A1C1B",borderDash:[4,4],fill:false,tension:.25,pointRadius:0,borderWidth:1.5,yAxisID:"y2"});
+  }
+  if(smokeChart) smokeChart.destroy();
+  smokeChart = new Chart(ctx,{type:"line",data:{labels,datasets},options:{
+    responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
+    plugins:{legend:{labels:{color:"#5C5C5C",font:{size:11},boxWidth:12}},
+             tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:"#1A1A1A",bodyColor:"#5C5C5C"}},
+    scales:{
+      x:{ticks:{color:"#5C5C5C",font:{size:11},autoSkip:false,maxRotation:0},grid:{color:"#E8E2DC"}},
+      y:{ticks:{color:"#5C5C5C",font:{size:11}},grid:{color:"#E8E2DC"},title:{display:true,text:"kWh / hour (~1,200 home sample)",color:"#5C5C5C",font:{size:11}}},
+      y2:{position:"right",ticks:{color:"#5C5C5C",font:{size:11}},grid:{display:false},title:{display:smokeTemp,text:"°C",color:"#5C5C5C",font:{size:11}}}
+    }
+  }});
+  document.getElementById("smokeCap").textContent = smokeSeason==="winter"
+    ? "Winter week (15 to 22 Jan 2021). Sub-zero outdoor temperatures drive sustained heating; the daily occupancy cycle creates the morning and evening peaks."
+    : "Summer week (15 to 22 Jul 2021). Heating is essentially off; what remains is the baseline + occupancy signal, with a much smaller diurnal amplitude.";
+}
+document.querySelectorAll("[data-smoke]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll("[data-smoke]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); smokeSeason=b.dataset.smoke; drawSmoke();
+  });
+});
+document.querySelectorAll("[data-bd]").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll("[data-bd]").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); smokeBreakdown=b.dataset.bd; drawSmoke();
+  });
+});
+document.querySelector("[data-tmp]").addEventListener("click",e=>{
+  smokeTemp = !smokeTemp;
+  e.target.classList.toggle("on", smokeTemp);
+  drawSmoke();
+});
+
+
+const SCN = {soc:{savekWh:44823723, adopters:11770}, top:{savekWh:26866223, adopters:1954}};
+function fmtMoney(v){if(v>=1e6) return "£"+(v/1e6).toFixed(2)+"m";if(v>=1e3) return "£"+(v/1e3).toFixed(0)+"k";return "£"+Math.round(v).toLocaleString();}
+function fmtMean(v){if(v>=1000) return "£"+Math.round(v).toLocaleString();return "£"+v.toFixed(0);}
+
+let scTotalChart, scPerAdopterChart;
+const LABELS = ["Social-rent HPs","Top-user HPs"];
+const COLORS = ["#E8521A","#1A1C1B"];
+
+function makeTradeoffChart(ctx, axisTitle, valueFormatter){
+  return new Chart(ctx, {
+    type:"bar",
+    data:{labels:LABELS, datasets:[{
+      label:"value", data:[0,0],
+      backgroundColor:COLORS, borderColor:["#a93a0e","#000"], borderWidth:0.6
+    }]},
+    options:{
+      indexAxis:"y",
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:"#1A1A1A",bodyColor:"#5C5C5C",
+          callbacks:{label: c => " "+valueFormatter(c.parsed.x)}}
+      },
+      scales:{
+        x:{beginAtZero:true, ticks:{color:"#5C5C5C",font:{size:10.5}}, grid:{color:"#E8E2DC"},
+          title:{display:true,text:axisTitle,color:"#5C5C5C",font:{size:10.5}}},
+        y:{ticks:{color:"#1A1A1A",font:{size:11.5,weight:"600"}},grid:{display:false}}
+      },
+      animation:{duration:180}
+    }
+  });
+}
+function initTradeoffCharts(){
+  const cA = document.getElementById("scTotalChart");
+  const cB = document.getElementById("scPerAdopterChart");
+  if(!cA || !cB) return;
+  if(scTotalChart) scTotalChart.destroy();
+  if(scPerAdopterChart) scPerAdopterChart.destroy();
+  scTotalChart = makeTradeoffChart(cA,
+    "Total saving (GWh / yr)",
+    v => v.toLocaleString(undefined,{maximumFractionDigits:1})+" GWh / yr"
+  );
+  scPerAdopterChart = makeTradeoffChart(cB,
+    "Mean saving per adopter (£ / yr)",
+    v => "£"+Math.round(v).toLocaleString()+" / yr"
+  );
+}
+function recomputeScenarios(){
+  const t = parseFloat(document.getElementById("tariff").value);
+  document.getElementById("tariffv").textContent = t.toFixed(1)+" p/kWh";
+  const tg = t/100;
+  const socTotal = SCN.soc.savekWh*tg, topTotal = SCN.top.savekWh*tg;
+  const socMean = socTotal/SCN.soc.adopters, topMean = topTotal/SCN.top.adopters;
+  const socBill = document.getElementById("socBill");
+  const topBill = document.getElementById("topBill");
+  const socSub = document.getElementById("socSub");
+  const topSub = document.getElementById("topSub");
+  if(socBill) socBill.innerHTML = fmtMoney(socTotal)+'<span class="ru">/yr</span>';
+  if(topBill) topBill.innerHTML = fmtMoney(topTotal)+'<span class="ru">/yr</span>';
+  if(socSub) socSub.textContent = `44.8 GWh saved · ${fmtMean(socMean)} per adopter`;
+  if(topSub) topSub.textContent = `26.9 GWh saved · ${fmtMean(topMean)} per adopter`;
+  const perAdopterDelta = document.getElementById("perAdopterDelta");
+  if(perAdopterDelta) perAdopterDelta.textContent = `${fmtMean(topMean)} vs ${fmtMean(socMean)} per adopter`;
+  if(scTotalChart){
+    scTotalChart.data.datasets[0].data = [SCN.soc.savekWh/1e6, SCN.top.savekWh/1e6];
+    scTotalChart.update("none");
+  }
+  if(scPerAdopterChart){
+    scPerAdopterChart.data.datasets[0].data = [socMean, topMean];
+    scPerAdopterChart.update("none");
+  }
+}
+/* HEAT-PUMP PAYBACK */
+let paybackChart;
+function initPaybackChart(){
+  const ctx = document.getElementById("paybackChart"); if(!ctx) return;
+  if(paybackChart) paybackChart.destroy();
+  // x-axis: tariff 18 -> 35 p/kWh
+  const tariffs = [];
+  for(let t=18; t<=35; t+=0.5) tariffs.push(t);
+  paybackChart = new Chart(ctx,{
+    type:"line",
+    data:{
+      labels: tariffs.map(t=>t.toFixed(1)),
+      datasets:[
+        {label:"Social-rent HPs", data:[], borderColor:"#E8521A", backgroundColor:"rgba(232,82,26,.10)", borderWidth:2.4, pointRadius:0, tension:.25, fill:false},
+        {label:"Top-user HPs",   data:[], borderColor:"#1A1C1B", backgroundColor:"rgba(26,28,27,.10)", borderWidth:2.4, pointRadius:0, tension:.25, fill:false}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
+      plugins:{
+        legend:{labels:{color:"#5C5C5C",font:{size:11},boxWidth:12}},
+        tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:"#1A1A1A",bodyColor:"#5C5C5C",
+          callbacks:{
+            title: items => `${items[0].label} p/kWh`,
+            label: c => ` ${c.dataset.label}: ${c.parsed.y.toFixed(1)} years`
+          }},
+        annotation: {}
+      },
+      scales:{
+        x:{ticks:{color:"#5C5C5C",font:{size:10.5},maxTicksLimit:9,callback:(v,i)=>tariffs[i]%2===0?tariffs[i].toFixed(0)+"p":""},grid:{color:"#E8E2DC"},
+          title:{display:true,text:"Electricity tariff (p / kWh)",color:"#5C5C5C",font:{size:11}}},
+        y:{beginAtZero:true,ticks:{color:"#5C5C5C",font:{size:10.5},callback:v=>v+"y"},grid:{color:"#E8E2DC"},
+          title:{display:true,text:"Years to payback",color:"#5C5C5C",font:{size:11}},
+          suggestedMax: 30
+        }
+      },
+      animation:{duration:200}
+    }
+  });
+}
+function recomputePayback(){
+  const cost = parseFloat(document.getElementById("hpCost").value);
+  document.getElementById("hpCostv").textContent = "£"+cost.toLocaleString();
+  if(!paybackChart) return;
+  const tariffs = [];
+  for(let t=18; t<=35; t+=0.5) tariffs.push(t);
+  // Per-adopter mean saving (kWh) is constant per scenario
+  const socKwh = SCN.soc.savekWh / SCN.soc.adopters;
+  const topKwh = SCN.top.savekWh / SCN.top.adopters;
+  const socData = tariffs.map(t => {
+    const annual = socKwh * (t/100);
+    return annual > 0 ? cost / annual : null;
+  });
+  const topData = tariffs.map(t => {
+    const annual = topKwh * (t/100);
+    return annual > 0 ? cost / annual : null;
+  });
+  paybackChart.data.datasets[0].data = socData;
+  paybackChart.data.datasets[1].data = topData;
+  // dynamic y max
+  const allVals = socData.concat(topData).filter(v=>v!=null);
+  paybackChart.options.scales.y.suggestedMax = Math.ceil(Math.max(...allVals)*1.1);
+  paybackChart.update("none");
+
+  // Update the result blocks at current tariff
+  const t = parseFloat(document.getElementById("tariff").value);
+  const tg = t/100;
+  const socYears = cost / (socKwh * tg);
+  const topYears = cost / (topKwh * tg);
+  const ps = document.getElementById("payback-soc");
+  const pt = document.getElementById("payback-top");
+  const pss = document.getElementById("payback-soc-sub");
+  const pts = document.getElementById("payback-top-sub");
+  if(ps) ps.innerHTML = socYears.toFixed(1)+'<span class="ru">years</span>';
+  if(pt) pt.innerHTML = topYears.toFixed(1)+'<span class="ru">years</span>';
+  if(pss) pss.textContent = `at ${t.toFixed(1)}p · ${fmtMean(socKwh*tg)}/yr saved`;
+  if(pts) pts.textContent = `at ${t.toFixed(1)}p · ${fmtMean(topKwh*tg)}/yr saved`;
+}
+document.getElementById("hpCost").addEventListener("input",recomputePayback);
+
+document.getElementById("tariff").addEventListener("input",()=>{recomputeScenarios();recomputePayback();});
+initTradeoffCharts();
+initPaybackChart();
+recomputeScenarios();
+recomputePayback();
+
+/* DESNZ VALIDATION CHARTS */
+const DESNZ = [
+  {year:2021, abm:13757, desnz:15250, err:-9.79},
+  {year:2022, abm:12889, desnz:13433, err:-4.05},
+  {year:2023, abm:13134, desnz:13712, err:-4.22}
+];
+let desnzTotalsChart, desnzErrorChart;
+function drawDesnz(){
+  const ctxA = document.getElementById("desnzTotalsChart");
+  const ctxB = document.getElementById("desnzErrorChart");
+  if(!ctxA || !ctxB) return;
+  if(desnzTotalsChart) desnzTotalsChart.destroy();
+  if(desnzErrorChart) desnzErrorChart.destroy();
+  const years = DESNZ.map(d=>d.year);
+  desnzTotalsChart = new Chart(ctxA, {
+    type:"bar",
+    data:{labels:years, datasets:[
+      {label:"ABM", data:DESNZ.map(d=>d.abm), backgroundColor:"#E8521A", borderColor:"#a93a0e", borderWidth:0.6},
+      {label:"DESNZ", data:DESNZ.map(d=>d.desnz), backgroundColor:"#1A1C1B", borderColor:"#000", borderWidth:0.6}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
+      plugins:{legend:{labels:{color:"#5C5C5C",font:{size:11},boxWidth:12}},
+        tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:"#1A1A1A",bodyColor:"#5C5C5C",
+          callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.y.toLocaleString()} kWh / dwelling`}}},
+      scales:{
+        x:{ticks:{color:"#1A1A1A",font:{size:12,weight:"600"}},grid:{display:false}},
+        y:{beginAtZero:false,ticks:{color:"#5C5C5C",font:{size:11},callback:v=>v.toLocaleString()},grid:{color:"#E8E2DC"},title:{display:true,text:"kWh / dwelling / year",color:"#5C5C5C",font:{size:11}}}
+      },
+      animation:{duration:220}
+    }
+  });
+  desnzErrorChart = new Chart(ctxB, {
+    type:"bar",
+    data:{labels:years, datasets:[
+      {label:"Signed error (ABM − DESNZ)", data:DESNZ.map(d=>d.err),
+        backgroundColor:DESNZ.map(d=>d.err<0?"#7CA67E":"#E8521A"),
+        borderColor:DESNZ.map(d=>d.err<0?"#4d7b50":"#a93a0e"), borderWidth:0.6}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},
+        tooltip:{backgroundColor:"#fff",borderColor:"#D8D0C8",borderWidth:1,padding:10,titleColor:"#1A1A1A",bodyColor:"#5C5C5C",
+          callbacks:{label:c=>` ${c.parsed.y.toFixed(2)}%`}}},
+      scales:{
+        x:{ticks:{color:"#1A1A1A",font:{size:12,weight:"600"}},grid:{display:false}},
+        y:{ticks:{color:"#5C5C5C",font:{size:11},callback:v=>v.toFixed(0)+"%"},grid:{color:"#E8E2DC"},title:{display:true,text:"Signed % error",color:"#5C5C5C",font:{size:11}}}
+      },
+      animation:{duration:220}
+    }
+  });
+}
+
+drawClimate();
+drawSmoke();
+</script>
+</body>
+</html>
