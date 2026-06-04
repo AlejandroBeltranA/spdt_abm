@@ -106,10 +106,36 @@ class EnergyModel(mesa.Model):
         self.awake_home_spike_mult: float = float(self.config.model.get("awake_home_spike_mult", 1.0))
         self.sleep_home_spike_mult: float = float(self.config.model.get("sleep_home_spike_mult", 0.3))
 
-        self.heating_setpoint_C: float = float(self.config.model.get("heating_setpoint_C", 18.5))
+        # Heating trigger temperature — the OUTDOOR ambient temperature
+        # below which space heating engages. Compared against ambient
+        # temperature in agent.apply_climate(); this is *not* an indoor
+        # comfort thermostat setting. Renamed from `heating_setpoint_C`
+        # 2026-05; old config key still accepted (warns once on use).
+        _trig = self.config.model.get("heating_trigger_temp_C")
+        if _trig is None:
+            _trig = self.config.model.get("heating_setpoint_C", 18.5)
+            if "heating_setpoint_C" in self.config.model and "heating_trigger_temp_C" not in self.config.model:
+                import warnings
+                warnings.warn(
+                    "Config key `heating_setpoint_C` is deprecated; use "
+                    "`heating_trigger_temp_C`. The parameter is an outdoor "
+                    "temperature threshold, not an indoor setpoint.",
+                    DeprecationWarning, stacklevel=2,
+                )
+        self.heating_trigger_temp_C: float = float(_trig)
+        # Backwards-compat alias — existing notebooks read m.heating_setpoint_C.
+        self.heating_setpoint_C: float = self.heating_trigger_temp_C
         self.cooling_threshold_C: float = float(self.config.model.get("cooling_threshold_C", 24.0))
         self.setpoint_setback_C: float = float(self.config.model.get("setpoint_setback_C", 2.0))
         self.heating_slope_kWh_per_deg: float = float(self.config.model.get("heating_slope_kWh_per_deg", 0.05))
+        # Optional fuel-specific base heating slope for electric-heated homes.
+        # SERL fits electric-heated sensitivity far below gas (~0.056 vs ~0.21
+        # kWh/h/°C in 2023); without this, electric homes inherit the gas slope
+        # and over-ramp. None → fall back to the shared slope above.
+        _elec_slope = self.config.model.get("heating_slope_kWh_per_deg_electric", None)
+        self.heating_slope_kWh_per_deg_electric: float | None = (
+            float(_elec_slope) if _elec_slope is not None else None
+        )
         self.cooling_slope_kWh_per_deg: float = float(self.config.model.get("cooling_slope_kWh_per_deg", 0.03))
         self.apply_structural_multipliers: bool = bool(self.config.model.get("apply_structural_multipliers", True))
         # heat-slope shaping / caps
@@ -207,6 +233,35 @@ class EnergyModel(mesa.Model):
         if heat_mult_cfg is None:
             heat_mult_cfg = self.config.model.get("pt_heat_mult", None)
         self.property_type_mult_heat: Dict[str, float] = heat_mult_cfg or PROPERTY_TYPE_MULT_HEAT
+
+        # ── v2 heating-side multipliers (added 2026-06 per calibration v2) ──
+        # Keyed by EPC band string ("A and B", "C", "D", "E", "F and G") and
+        # SERL building_age string. Missing keys default to 1.0 so configs
+        # without v2 fields (v1 / notebook-single-year / default) continue to
+        # produce identical behaviour. property_type_mult_heating_* fields
+        # are READ but not applied — the v1 model already differentiates
+        # heating by floor area (heat_slope_area_exp), and applying a
+        # property-type multiplier on top would double-count. Captured here
+        # so the config remains a faithful record of calibration outputs.
+        self.sap_band_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("sap_band_mult_heating_gas") or {}
+        )
+        self.sap_band_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("sap_band_mult_heating_electric") or {}
+        )
+        self.building_age_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("building_age_mult_heating_gas") or {}
+        )
+        self.building_age_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("building_age_mult_heating_electric") or {}
+        )
+        # Recorded but unused (see comment above):
+        self.property_type_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("property_type_mult_heating_gas") or {}
+        )
+        self.property_type_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("property_type_mult_heating_electric") or {}
+        )
 
         # Schedules (tunable): schedule archetype defs + WFH + jitter.
         # - `schedule_defs` maps archetype tag -> (leave_hour, return_hour)
@@ -431,7 +486,8 @@ class EnergyModel(mesa.Model):
                     vv = None
                 setattr(house, attr, vv)
             # recompute heat slope in case config differs from default
-            house.heat_slope_kWh_per_deg = house._compute_heat_slope(self.heating_slope_kWh_per_deg)
+            # (fuel-specific base slope: electric homes use the electric slope)
+            house.heat_slope_kWh_per_deg = house._compute_heat_slope(house._model_base_heat_slope())
             self.household_agents.append(house)
             self.space.add_agents([house])
 
@@ -988,6 +1044,10 @@ class EnergyModel(mesa.Model):
 
         This avoids materializing `agent_dc.get_agent_vars_dataframe()` for common
         analyses like "top consumers in YEAR".
+
+        Also accumulates per-fuel totals into `annual_electric_kwh_by_year` and
+        `annual_gas_kwh_by_year` (lazy-initialised) so LSOA-level validation
+        against DESNZ (which is fuel-split) does not need the per-step datacollector.
         """
         if self._start_ts_utc is None:
             return
@@ -995,7 +1055,24 @@ class EnergyModel(mesa.Model):
         year = int(hour_start_utc.year)
         for h in self.household_agents:
             try:
-                h.annual_kwh_by_year[year] = float(h.annual_kwh_by_year.get(year, 0.0)) + float(getattr(h, "energy_consumption", 0.0))
+                h.annual_kwh_by_year[year] = (
+                    float(h.annual_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "energy_consumption", 0.0))
+                )
+                # Per-fuel accumulators — lazy init so existing agents created
+                # before this attribute existed still work.
+                if not hasattr(h, "annual_electric_kwh_by_year"):
+                    h.annual_electric_kwh_by_year = {}
+                if not hasattr(h, "annual_gas_kwh_by_year"):
+                    h.annual_gas_kwh_by_year = {}
+                h.annual_electric_kwh_by_year[year] = (
+                    float(h.annual_electric_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "electric_kwh", 0.0))
+                )
+                h.annual_gas_kwh_by_year[year] = (
+                    float(h.annual_gas_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "gas_kwh", 0.0))
+                )
             except Exception:
                 continue
 
@@ -1051,9 +1128,9 @@ class EnergyModel(mesa.Model):
                     temp_sum += tempC
                     temp_n += 1
                 occ = h.occupancy_count
-                setp = self.heating_setpoint_C
+                setp = self.heating_trigger_temp_C
                 if occ is not None and occ <= 0:
-                    setp = float(self.heating_setpoint_C) - float(getattr(self, "setpoint_setback_C", 0.0))
+                    setp = float(self.heating_trigger_temp_C) - float(getattr(self, "setpoint_setback_C", 0.0))
                 h.apply_climate(
                     tempC,
                     heating_setpoint=setp,
@@ -1066,7 +1143,7 @@ class EnergyModel(mesa.Model):
             for h in self.household_agents:
                 h.apply_climate(
                     float("nan"),
-                    heating_setpoint=self.heating_setpoint_C,
+                    heating_setpoint=self.heating_trigger_temp_C,
                     cooling_threshold=self.cooling_threshold_C,
                     heat_slope=getattr(h, "heat_slope_kWh_per_deg", heat_slope_default),
                     cool_slope=cool_slope_default,

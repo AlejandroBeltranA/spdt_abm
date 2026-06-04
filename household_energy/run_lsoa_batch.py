@@ -61,6 +61,16 @@ class RunConfig:
     outdir: Path
     agent_collect_every: int
     stamp: str
+    # Restored 2026-05: removed in an earlier refactor, but
+    # notebooks/energy-model-validation.ipynb (and any other batch caller)
+    # passes config_path= to point at a calibrated YAML. Without this,
+    # _run_single_lsoa silently used config_defaults.yaml — meaning batch
+    # runs that *thought* they were calibrated were actually using defaults.
+    config_path: Optional[Path] = None
+    # save_model_timeseries restored for back-compat with the notebook;
+    # currently a no-op flag (model-level hourly timeseries dump not yet
+    # implemented in the batch runner). Accepted to prevent TypeError.
+    save_model_timeseries: bool = False
 
 
 # ───────────────────────────── helper functions ──────────────────────────────
@@ -142,6 +152,11 @@ def _run_single_lsoa(lsoa_code: str, cfg: RunConfig, idx: int = 1, total: int = 
         local_tz=cfg.local_tz,
         collect_agent_level=False,
         agent_collect_every=cfg.agent_collect_every,
+        # Pass the calibrated config through to EnergyModel; if None,
+        # the model falls back to config_defaults.yaml. Threading this is
+        # the whole point of cfg.config_path — previously it was accepted
+        # but ignored, which silently disabled calibration.
+        config_path=(str(cfg.config_path) if cfg.config_path else None),
     )
 
     for h in range(T_hours):
@@ -154,18 +169,79 @@ def _run_single_lsoa(lsoa_code: str, cfg: RunConfig, idx: int = 1, total: int = 
     mdl = mdl.set_index("hour_start_utc").iloc[1:]  # drop t0 snapshot
     mdl = mdl.loc[(mdl.index >= start_ts) & (mdl.index < end_ts)]
 
-    annual = (
-        mdl["total_energy"]
-        .resample("YS")
-        .sum()
-        .rename("abm_kwh")
-        .to_frame()
-    )
-    annual["year"] = annual.index.year
+    # Annual sums per fuel (resampled from hourly model-level totals)
+    fuel_cols = {
+        "abm_kwh":       "total_energy",
+        "abm_elec_kwh":  "total_electric_kwh",
+        "abm_gas_kwh":   "total_gas_kwh",
+        "abm_other_kwh": "total_other_kwh",
+    }
+    annual_parts = []
+    for out_name, src_col in fuel_cols.items():
+        if src_col not in mdl.columns:
+            # Older model versions: missing the per-fuel split. Emit zeros so the
+            # downstream notebook still gets the expected schema.
+            s = pd.Series(0.0, index=mdl.index).resample("YS").sum().rename(out_name)
+        else:
+            s = mdl[src_col].resample("YS").sum().rename(out_name)
+        annual_parts.append(s)
+    annual = pd.concat(annual_parts, axis=1)
+    annual["year"]      = annual.index.year
     annual["lsoa_code"] = lsoa_code
-    dwellings = len(gdf)
-    annual["run_dwellings"] = dwellings
-    annual["abm_kwh_per_dw"] = annual["abm_kwh"] / dwellings
+
+    # ── Dwelling counters (computed from the stock gdf — not from the model) ─
+    n_total = len(gdf)
+
+    def _bool_series(col: str) -> pd.Series:
+        if col not in gdf.columns:
+            return pd.Series(False, index=gdf.index)
+        s = pd.to_numeric(gdf[col], errors="coerce")
+        return s == 1
+
+    is_gas_t      = _bool_series("is_gas")
+    is_offgas_t   = _bool_series("is_off_gas")
+    is_gas_unk    = gdf["is_gas"].isna() if "is_gas" in gdf.columns else pd.Series(True, index=gdf.index)
+
+    mft = (gdf.get("main_fuel_type", pd.Series([""] * n_total))
+              .astype(str).str.lower().str.strip())
+
+    run_gas_dwellings_strict           = int(is_gas_t.sum())
+    run_off_gas_dwellings              = int(is_offgas_t.sum())
+    run_unknown_gas_connection_dwellings = int(is_gas_unk.sum())
+    # "assumed" gas-connected = definitively yes + unknowns
+    run_gas_dwellings                  = run_gas_dwellings_strict + run_unknown_gas_connection_dwellings
+
+    run_gas_heated_dwellings           = int((mft == "mains gas").sum())
+    run_electric_heated_dwellings      = int((mft == "electricity").sum())
+    _non_heated = {"mains gas", "electricity", "no fuel", "nan", "unknown", "none", ""}
+    run_other_heated_dwellings         = int((~mft.isin(_non_heated)).sum())
+    # Top-level: all UK domestic dwellings have an electricity supply
+    run_electric_dwellings             = n_total
+    run_other_dwellings                = 0
+
+    annual["run_dwellings"]                          = n_total
+    annual["run_gas_dwellings"]                      = run_gas_dwellings
+    annual["run_gas_dwellings_strict"]               = run_gas_dwellings_strict
+    annual["run_off_gas_dwellings"]                  = run_off_gas_dwellings
+    annual["run_unknown_gas_connection_dwellings"]   = run_unknown_gas_connection_dwellings
+    annual["run_gas_heated_dwellings"]               = run_gas_heated_dwellings
+    annual["run_electric_heated_dwellings"]          = run_electric_heated_dwellings
+    annual["run_other_heated_dwellings"]             = run_other_heated_dwellings
+    annual["run_electric_dwellings"]                 = run_electric_dwellings
+    annual["run_other_dwellings"]                    = run_other_dwellings
+
+    # ── Per-dwelling rate columns (denominators chosen per the validation
+    # notebook's framework: strict gas-connected for gas/gas; all dwellings
+    # for elec/total; gas-heated for the heating-only gas rate). ──
+    def _safe_div(num, denom):
+        return num / denom if denom else float("nan")
+
+    annual["abm_kwh_per_dw"]              = annual["abm_kwh"]       / n_total
+    annual["abm_elec_kwh_per_dw"]         = annual["abm_elec_kwh"]  / n_total
+    annual["abm_gas_kwh_per_dw"]          = annual["abm_gas_kwh"]   / n_total
+    annual["abm_gas_kwh_per_gas_dw"]      = annual["abm_gas_kwh"]   / (run_gas_dwellings or float("nan"))
+    annual["abm_gas_kwh_per_gas_heated_dw"] = annual["abm_gas_kwh"] / (run_gas_heated_dwellings or float("nan"))
+    annual["abm_other_kwh_per_dw"]        = annual["abm_other_kwh"] / n_total
 
     outdir = cfg.outdir / lsoa_code / f"run_{cfg.stamp}"
     outdir.mkdir(parents=True, exist_ok=True)

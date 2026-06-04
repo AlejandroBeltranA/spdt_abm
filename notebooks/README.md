@@ -10,8 +10,8 @@ This directory contains the full analysis pipeline for the paper **"Too Hot to H
 |----------|---------------|-----------------|
 | `01-climate-prep.ipynb` | Data & Methods — Climate | Hourly ERA5 temperature parquet for the model |
 | `household_energy_abm_tutorial.ipynb` | Data & Methods — Model Architecture | End-to-end walkthrough of the MABM; establishes all key concepts |
-| `serl_calibration_clean.ipynb` | Data & Methods — Calibration | Analytically derived model parameters from SERL Smart Meter data; produces `calibrated_config.yaml` |
-| `energy-model-validation.ipynb` | Results — Validation | ABM vs DESNZ per-LSOA comparison (2020–2023); the key quantitative validation |
+| `serl_calibration_clean.ipynb` | Data & Methods — Calibration | Analytically derived model parameters from SERL Smart Meter data; produces `calibrated_config.yaml`. Emits the v4 fuel-specific electric base heating slope (`heating_slope_kWh_per_deg_electric`) and neutralizes the legacy electric `heating_slope_mult` |
+| `energy-model-validation.ipynb` | Results — Validation | ABM vs DESNZ per-LSOA comparison (2020–2023); the key quantitative validation. Includes the coverage-aware confidence layer that tiers LSOAs (High/Medium/Low) by EPC-to-meter coverage rather than treating DESNZ as a calibration target |
 | `policy_scenarios_detailed.ipynb` | Results — Policy Experiments | Step-by-step walkthrough of all five policy scenarios (A–E) with interpretation |
 | `policy_scenarios_summary.ipynb` | Results — Figures | Parallel batch run of all scenarios; produces summary tables and the comparison map |
 | `full_run_example.ipynb` | Results — Future Projections | 2020–2039 long-horizon run; baseline for climate trajectory analysis |
@@ -27,9 +27,9 @@ If you are new to the project, work through notebooks in this sequence:
 
 2. **`01-climate-prep.ipynb`** — understand the ERA5 climate input. Shows how outdoor temperature maps to individual dwellings via nearest-neighbour grid assignment.
 
-3. **`serl_calibration_clean.ipynb`** — understand how model parameters were derived from the SERL Smart Meter dataset. The output `calibrated_config.yaml` is what makes the model's energy numbers meaningful rather than illustrative.
+3. **`serl_calibration_clean.ipynb`** — understand how model parameters were derived from the SERL Smart Meter dataset. The output `calibrated_config.yaml` is what makes the model's energy numbers meaningful rather than illustrative. As of the v4 calibration (2026-06-04) electric-heated dwellings use a fuel-specific base heating slope instead of inheriting the (3.7× steeper) gas slope, which fixes the electricity overshoot in all-electric LSOAs.
 
-4. **`energy-model-validation.ipynb`** — the independent validation. Compares model output against DESNZ subnational electricity and gas statistics for 2020–2023, per LSOA.
+4. **`energy-model-validation.ipynb`** — the independent validation. Compares model output against DESNZ subnational electricity and gas statistics for 2020–2023, per LSOA. DESNZ is treated as an independent benchmark (with known meter-vs-EPC coverage contamination), not a calibration target: the coverage-aware confidence layer reports *which* LSOA outputs to trust (138 High / 43 Medium / 4 Low) and exports `research/applied/lsoa_confidence_2023.html`.
 
 5. **`policy_scenarios_detailed.ipynb`** — the core policy experiments. Works through each scenario (income-targeted heat pump grants, multi-year HP vs baseline, top-user targeting, kids vs elderly, social rent) with detailed commentary.
 

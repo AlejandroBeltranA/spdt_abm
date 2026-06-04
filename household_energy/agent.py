@@ -26,7 +26,78 @@ from __future__ import annotations
 
 
 import math
+import re
 from typing import Dict, List, Optional
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERL segmentation-label helpers (added 2026-06 for calibration v2)
+#
+# Map per-dwelling EPC attributes to the band labels SERL uses, so the
+# v2 heating-side multipliers in the model config can be looked up by
+# the agent's actual characteristics.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _serl_sap_band(sap_rating) -> str:
+    """Map SAP numeric rating (1-100ish) to SERL `currentEnergyRating` band."""
+    try:
+        sap = float(sap_rating)
+    except (TypeError, ValueError):
+        return "D"  # safe default: most common UK band
+    if not math.isfinite(sap) or sap <= 0:
+        return "D"
+    # UK SAP-to-EPC mapping (SAP 2012): A=92+, B=81-91, C=69-80, D=55-68,
+    # E=39-54, F=21-38, G=1-20. SERL collapses to 5 bands.
+    if sap >= 81: return "A and B"
+    if sap >= 69: return "C"
+    if sap >= 55: return "D"
+    if sap >= 39: return "E"
+    return "F and G"
+
+
+_AGE_RANGES = [
+    ("Before 1900",  (0,    1899)),
+    ("1900 - 1929",  (1900, 1929)),
+    ("1930 - 1949",  (1930, 1949)),
+    ("1950 - 1975",  (1950, 1975)),
+    ("1976 - 1990",  (1976, 1990)),
+    ("1991 - 2002",  (1991, 2002)),
+    ("2003 onwards", (2003, 9999)),
+]
+
+
+def _serl_age_band(property_age) -> str:
+    """Map an EPC `property_age` string to SERL `building_age` band.
+
+    EPC uses "YYYY-YYYY" or "Before 1900" or "2003 onwards" style. The mapping
+    handles the common variants (with/without spaces around the dash). Falls
+    back to "No data" if unparseable — the model treats that as a 1.0
+    multiplier (no correction).
+    """
+    if property_age is None:
+        return "No data"
+    s = str(property_age).strip().lower()
+    if not s or s in ("nan", "none", "no data"):
+        return "No data"
+    if "pre" in s or "before" in s:
+        return "Before 1900"
+    if "onwards" in s or s.startswith("post"):
+        return "2003 onwards"
+    m = re.search(r"(\d{4})\s*[-–—]\s*(\d{4})", s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        mid = (a + b) / 2.0
+        for label, (lo, hi) in _AGE_RANGES:
+            if lo <= mid <= hi:
+                return label
+        return "No data"
+    m1 = re.search(r"(\d{4})", s)
+    if m1:
+        y = int(m1.group(1))
+        for label, (lo, hi) in _AGE_RANGES:
+            if lo <= y <= hi:
+                return label
+    return "No data"
 
 import mesa
 import mesa_geo as mg
@@ -204,6 +275,10 @@ class HouseholdAgent(mg.GeoAgent):
         # NEW: attach core drivers (kept raw; used in calc/reporters)
         self.floor_area_m2 = None if floor_area_m2 is None else float(floor_area_m2)    # NEW
         self.property_age = _clean_text(property_age)  # NEW
+        # Cache SERL segmentation labels for v2 heating-side multipliers.
+        # Resolved once at init so apply_climate doesn't re-parse strings 8760×.
+        self._serl_sap_band: str = _serl_sap_band(sap_rating)
+        self._serl_age_band: str = _serl_age_band(self.property_age)
         self.main_fuel_type = _clean_text(main_fuel_type)  # NEW
         self.main_heating_system = _clean_text(main_heating_system)  # NEW
         self.is_heatpump_candidate = 1 if (is_heatpump_candidate or 0) else 0  # NEW
@@ -277,8 +352,11 @@ class HouseholdAgent(mg.GeoAgent):
         # NEW: precompute hourly base once (big speed win)
         self._hourly_base_electric_kwh, self._hourly_base_gas_kwh = self._compute_hourly_base_components()
         self._hourly_base_kwh: float = self._hourly_base_electric_kwh + self._hourly_base_gas_kwh
-        # NEW: per-household heat slope (kWh per degC-hour) for climate response
-        self.heat_slope_kWh_per_deg: float = self._compute_heat_slope(getattr(model, "heating_slope_kWh_per_deg", 0.05))
+        # NEW: per-household heat slope (kWh per degC-hour) for climate response.
+        # Base slope is fuel-specific: electric-heated homes use the model's
+        # electric slope (SERL fits it far below gas); all others use the shared
+        # slope. Structure modulation is applied on top in _compute_heat_slope.
+        self.heat_slope_kWh_per_deg: float = self._compute_heat_slope(self._model_base_heat_slope())
         # NEW: per-household heating capacity (kWh/h) for duty-cycle model
         self.heat_capacity_kWh_per_hour: float = self._compute_heat_capacity()
         # Cache fuel-split routing once; this is used in person-hour hot paths.
@@ -341,6 +419,21 @@ class HouseholdAgent(mg.GeoAgent):
     def _compute_hourly_base_kwh(self) -> float:
         elec_kwh, gas_kwh = self._compute_hourly_base_components()
         return elec_kwh + gas_kwh
+
+    def _model_base_heat_slope(self) -> float:
+        """Model-level base heating slope for this dwelling, fuel-specific.
+
+        Electric-heated homes use ``heating_slope_kWh_per_deg_electric`` when the
+        config supplies it; everything else uses the shared
+        ``heating_slope_kWh_per_deg``. Heat loss through the envelope (SAP, age,
+        area) is applied on top by ``_compute_heat_slope`` and is fuel-agnostic.
+        """
+        default = getattr(self.model, "heating_slope_kWh_per_deg", 0.05)
+        if self._resolve_heating_fuel_bucket() == "electric":
+            elec = getattr(self.model, "heating_slope_kWh_per_deg_electric", None)
+            if elec is not None:
+                return float(elec)
+        return float(default)
 
     def _compute_heat_slope(self, base_slope: float) -> float:
         """Per-household temperature sensitivity (heating slope). Structure affects slope, not annual anchor."""
@@ -712,9 +805,30 @@ class HouseholdAgent(mg.GeoAgent):
         hd = max(0.0, (heating_setpoint - self.ambient_tempC) - db)
         cd = max(0.0, (self.ambient_tempC - cooling_threshold) - db)
 
+        # v2 heating-side multipliers (added 2026-06).
+        # Resolve fuel bucket up-front so we can select the right (gas vs elec)
+        # multiplier dict. Missing keys default to 1.0 — older configs without
+        # v2 fields produce identical behaviour to before.
+        _bucket = self._heating_fuel_bucket()
+        if _bucket == "gas":
+            _sap_mults = getattr(self.model, "sap_band_mult_heating_gas",      None) or {}
+            _age_mults = getattr(self.model, "building_age_mult_heating_gas",  None) or {}
+        elif _bucket == "electric":
+            _sap_mults = getattr(self.model, "sap_band_mult_heating_electric",     None) or {}
+            _age_mults = getattr(self.model, "building_age_mult_heating_electric", None) or {}
+        else:
+            _sap_mults, _age_mults = {}, {}
+        _sap_mult = float(_sap_mults.get(getattr(self, "_serl_sap_band", "D"), 1.0))
+        _age_mult = float(_age_mults.get(getattr(self, "_serl_age_band", "_overall"), 1.0))
+        _heating_sensitivity_mult = _sap_mult * _age_mult
+
         # Slope and duty cycle
         base_slope = float(heat_slope) if heat_slope is not None else float(self.heat_slope_kWh_per_deg)
-        eff_heat_slope = base_slope * (self.hp_effect_mult if self.has_heatpump else 1.0)
+        eff_heat_slope = (
+            base_slope
+            * (self.hp_effect_mult if self.has_heatpump else 1.0)
+            * _heating_sensitivity_mult
+        )
         loss_index = hd * eff_heat_slope
         K = float(getattr(self.model, "loss_to_duty_k", 3.0))
         duty = loss_index / (loss_index + K) if loss_index > 0 else 0.0
@@ -742,8 +856,9 @@ class HouseholdAgent(mg.GeoAgent):
         self.climate_heating_kWh = heat
         self.climate_cooling_kWh = cool
         self.energy_consumption += heat + cool
-        # Assign heating kWh to fuel bucket (cooling treated as electric by default)
-        bucket = self._heating_fuel_bucket()
+        # Reuse the fuel bucket resolved above for the v2 multipliers.
+        # (Cooling treated as electric by default.)
+        bucket = _bucket
         if bucket == "electric":
             self.electric_kwh += heat + cool
         elif bucket == "gas":

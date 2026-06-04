@@ -10,7 +10,8 @@ meta:
 #    Overrides deep-merge on top of these defaults.
 #  - Common override knobs (and what they do):
 #      model:
-#        heating_setpoint_C / cooling_threshold_C  → comfort / heat-load shifts
+#        heating_trigger_temp_C / cooling_threshold_C  → outdoor heat-load shifts
+#          (old key `heating_setpoint_C` still accepted — renamed 2026-05)
 #        heating_slope_kWh_per_deg / cooling_slope_kWh_per_deg → climate sensitivity
 #        energy_per_person_home / away → occupant spikes baseline
 #        heatpump_adoption_rate / heatpump_class_weight → HP uptake & targeting
@@ -33,7 +34,9 @@ model:
   #       they only shape heating via slopes/capacity.
   #       Baseline uses property_type_mult_base; heating uses pt_heat_mult.
   local_tz: Europe/London
-  heating_setpoint_C: 18.5      # occupied setpoint (can be archetype-adjusted)
+  heating_trigger_temp_C: 18.5  # outdoor ambient °C below which heating engages
+                                # (renamed from heating_setpoint_C 2026-05;
+                                #  old key still accepted with DeprecationWarning)
   cooling_threshold_C: 24.0
   heating_slope_kWh_per_deg: 0.05  # base slope; adjust per archetype/system
   cooling_slope_kWh_per_deg: 0.03
