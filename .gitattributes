@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# ── Release-tarball exclusions (git archive / GitHub release / Zenodo) ──
+# Generated demo + animation artifacts: kept in the repo and served from
+# GitHub Pages, but excluded from the source archive to keep it lean.
+# They are NOT needed to reproduce any result.
+docs/abm_demo_assets export-ignore
+notebooks/abm_animation_synthpop.mp4 export-ignore
