@@ -3,7 +3,7 @@ Simulates hour-by-hour residential energy demand for every dwelling in a GeoJSON
 
 ---
 
-## What’s new (Jan 2026)
+## What’s new
 - **Meter-anchored baseline:** fixed 0.40 kWh/h with mild area/property-type scaling; structural multipliers only affect heating. Baseline capped at 1.5 kWh/h.
 - **Duty-cycle heating + caps:** sublinear area scaling, bounded property-type multipliers, 20 kWh/h total cap with per-component clip diagnostics.
 - **Scenario testing v2:** ready-to-wire policy selectors (income/education, top users, kids vs elderly, social rent) documented in `docs/scenario_testing_v2_guide.md`.
@@ -29,10 +29,10 @@ notebooks/
 docs/
 └── scenario_testing_v2_guide.md     # Dashboard-ready scenario guide
 
-scripts/
-├── enrichment_check.py              # HIDP/EPC enrichment sanity check
-└── serl_grid_search.py              # SERL calibration grid search (+ others)
-
+research/applied/            # Calibration + validation pipeline (Applied Energy paper)
+├── scripts/                 # SERL fits, ledger, calibration + validation runners
+├── notebooks/               # Calibration / sensitivity / validation / figures
+└── RUNBOOK.md               # How to regenerate the config and promote it into the engine
 ```
 
 ---
@@ -162,7 +162,7 @@ Use `energy-model-validation.ipynb`:
 ## Support scripts
 - `energy-run-lsoa` — CLI entry point for per-LSOA batches (agent-level optional), saves annual kWh by LSOA/year. Implemented in `household_energy/run_lsoa_batch.py`.
 - `household_energy/make_animation.py` — helper for per-LSOA animated visualisations (optional).
-- `scripts/` — analysis utilities: SERL calibration grid search, PPT figure generation, scenario plots, enrichment check, notebook smoke test.
+- `research/applied/scripts/` — calibration + validation utilities: the SERL fits and ledger, figure generation, sensitivity (Morris), and spatial-transfer validation.
 
 ---
 
@@ -171,5 +171,15 @@ Use `energy-model-validation.ipynb`:
 
 ---
 
+## Citation
+If you use this software, please cite it using the metadata in [`CITATION.cff`](CITATION.cff)
+(GitHub renders a "Cite this repository" button from it). Each release is archived on
+Zenodo with a version DOI; cite the specific version you used.
+<!-- TODO: add the Zenodo DOI badge here after the first release -->
+
+This work is part of the wider DestinE SPDT project ([10.5281/zenodo.21340939](https://doi.org/10.5281/zenodo.21340939)).
+
+---
+
 ## License
-Apache-2.0 (unless stated otherwise in subcomponents).
+MIT — see [`LICENSE`](LICENSE). © 2025 The Alan Turing Institute.
