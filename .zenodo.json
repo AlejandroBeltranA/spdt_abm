@@ -7,7 +7,16 @@
   "creators": [
     {
       "name": "Beltran, Alejandro",
-      "affiliation": "The Alan Turing Institute"
+      "affiliation": "The Alan Turing Institute",
+      "orcid": "0000-0001-9544-7355"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.21340939",
+      "relation": "isPartOf",
+      "scheme": "doi",
+      "resource_type": "software"
     }
   ],
   "keywords": [
