@@ -305,7 +305,6 @@ examples/
 notebooks/*.ipynb
 !notebooks/01-climate-prep.ipynb
 !notebooks/energy-model-validation.ipynb
-!notebooks/abm_end_to_end_tutorial.ipynb
 !notebooks/full_run_example.ipynb
 !notebooks/household_energy_abm_tutorial.ipynb
 !notebooks/serl_calibration_clean.ipynb

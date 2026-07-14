@@ -15,7 +15,6 @@ This directory contains the full analysis pipeline for the paper **"Too Hot to H
 | `policy_scenarios_detailed.ipynb` | Results — Policy Experiments | Step-by-step walkthrough of all five policy scenarios (A–E) with interpretation |
 | `policy_scenarios_summary.ipynb` | Results — Figures | Parallel batch run of all scenarios; produces summary tables and the comparison map |
 | `full_run_example.ipynb` | Results — Future Projections | 2020–2039 long-horizon run; baseline for climate trajectory analysis |
-| `abm_end_to_end_tutorial.ipynb` | Supplementary / Funder demo | Full pipeline with embedded outputs; **do not strip outputs** |
 
 ---
 
@@ -61,17 +60,6 @@ All input files are git-ignored and must be present in `data/` before running an
 
 ---
 
-## Two result directories required by the funder demo
-
-`abm_end_to_end_tutorial.ipynb` references specific pre-computed outputs. These are not git-tracked but must be present locally for the notebook to render fully:
-
-- `results/calibration_20260316_161904/` — DESNZ city comparison and SERL validation outputs
-- `notebooks/results/scenario_v2_1/` — scenario summary and comparison map
-
-Both are reproducible from `energy-run-lsoa` and `policy_scenarios_summary.ipynb` respectively.
-
----
-
 ## Five policy scenarios
 
 All scenario notebooks implement the same five experiment patterns. These map directly to the paper's policy analysis section:
@@ -90,6 +78,6 @@ Scenarios require HIDP enrichment for the cohort masks (income, education, tenur
 
 ## Notebook hygiene
 
-- Outputs are stripped from all notebooks except `abm_end_to_end_tutorial.ipynb` (funder demo, kept with outputs)
+- Outputs are stripped from all notebooks
 - The `nbstripout` git hook prevents accidental output commits: `nbstripout --install`
 - Run the smoke test before committing: `python scripts/notebook_smoke.py notebooks/full_run_example.ipynb`

@@ -23,7 +23,6 @@ household_energy/            # Core package
 notebooks/
 ├── energy-model-validation.ipynb    # DESNZ alignment, LSOA batch runs
 ├── household_energy_abm_tutorial.ipynb
-├── abm_end_to_end_tutorial.ipynb    # Full walkthrough (funder demo, with outputs)
 ├── policy_scenarios_detailed.ipynb  # Step-by-step policy scenario analysis
 └── policy_scenarios_summary.ipynb   # All scenarios in one go, with maps
 
@@ -133,7 +132,6 @@ See `notebooks/README.md` for the full reading order and paper section map.
 - **Validation:** `notebooks/energy-model-validation.ipynb` — ABM vs DESNZ per-LSOA comparison (2020–2023).
 - **Policy experiments:** `notebooks/policy_scenarios_detailed.ipynb` — step-by-step; `notebooks/policy_scenarios_summary.ipynb` — all scenarios + map.
 - **Future projections:** `notebooks/full_run_example.ipynb` — 2020–2039 long-horizon run.
-- **Funder demo:** `notebooks/abm_end_to_end_tutorial.ipynb` — full pipeline with embedded outputs (do not strip).
 
 ---
 
