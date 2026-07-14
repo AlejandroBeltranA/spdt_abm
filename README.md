@@ -1,4 +1,7 @@
 # Household Energy ABM (Mesa + mesa-geo)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21356629.svg)](https://doi.org/10.5281/zenodo.21356629)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Simulates hour-by-hour residential energy demand for every dwelling in a GeoJSON, with validation against DESNZ subnational electricity & gas (2020–2023) and built-in policy levers (heat-pumps, retrofits, socio-demographic targeting).
 
 ---
@@ -173,9 +176,10 @@ Use `energy-model-validation.ipynb`:
 
 ## Citation
 If you use this software, please cite it using the metadata in [`CITATION.cff`](CITATION.cff)
-(GitHub renders a "Cite this repository" button from it). Each release is archived on
-Zenodo with a version DOI; cite the specific version you used.
-<!-- TODO: add the Zenodo DOI badge here after the first release -->
+(GitHub renders a "Cite this repository" button from it). Each release is archived on Zenodo:
+
+- **Cite all versions (concept DOI):** [10.5281/zenodo.21356629](https://doi.org/10.5281/zenodo.21356629)
+- **This release (v1.0.0):** [10.5281/zenodo.21356630](https://doi.org/10.5281/zenodo.21356630)
 
 This work is part of the wider DestinE SPDT project ([10.5281/zenodo.21340939](https://doi.org/10.5281/zenodo.21340939)).
 

@@ -17,4 +17,11 @@ repository-code: "https://github.com/AlejandroBeltranA/spdt_abm"
 license: MIT
 version: 1.0.0
 date-released: 2026-07-14
-# doi: 10.5281/zenodo.XXXXXXX   # TODO: add the Zenodo concept DOI after the first release
+doi: 10.5281/zenodo.21356629
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21356629
+    description: "Concept DOI (all versions)"
+  - type: doi
+    value: 10.5281/zenodo.21356630
+    description: "Version DOI (v1.0.0)"
