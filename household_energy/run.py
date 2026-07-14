@@ -26,14 +26,14 @@ USAGE EXAMPLES
 # 7-day quick run (uses climate start index if provided)
 python -m household_energy.run \
   data/ncc_neighborhood.geojson \
-  --climate data/ncc_2t_timeseries_2010_2039.parquet \
+  --climate data/ncc_2t_timeseries_2010_2026.parquet \
   --days 7 \
   --outdir results \
   --no-agent-level
 or
 energy-run \
   data/ncc_neighborhood.geojson \
-  --climate data/ncc_2t_timeseries_2010_2039.parquet \
+  --climate data/ncc_2t_timeseries_2010_2026.parquet \
   --days 7 \
   --outdir results \
   --no-agent-level
@@ -68,7 +68,7 @@ import pandas as pd
 
 from household_energy.model import EnergyModel
 from household_energy.climate import ClimateField
-from household_energy.config import load_config
+from household_energy.config import load_config, CALIBRATED_PATH
 
 
 # ────────────────────────── CLI parser ────────────────────────────
@@ -103,6 +103,9 @@ def parse_args() -> argparse.Namespace:
                    help="Output folder for CSV / Parquet / pickle (default: .)")
     p.add_argument("--print-every-hours", type=int, default=24*7,
                    help="Progress print frequency (in hours). Default: 168 (weekly).")
+    p.add_argument("--config", default=str(CALIBRATED_PATH),
+                   help="Calibrated config YAML (default: the shipped v5 "
+                        "calibration). Pass 'defaults' to run uncalibrated.")
 
     return p.parse_args()
 
@@ -195,6 +198,7 @@ def main() -> None:
 
     # 2 ─ Build model (optionally disable agent-level collection; set cadence)
     t0 = time.perf_counter()
+    config_path = None if str(args.config).lower() == "defaults" else args.config
     model = EnergyModel(
         gdf=gdf,
         climate_parquet=args.climate,
@@ -202,6 +206,7 @@ def main() -> None:
         local_tz=args.local_tz,
         collect_agent_level=not args.no_agent_level,
         agent_collect_every=args.agent_collect_every,
+        config_path=config_path,
     )
     init_s = time.perf_counter() - t0
     print(f"Init: {init_s:.2f}s | households={len(model.household_agents):,}, persons={len(model.person_agents):,}")

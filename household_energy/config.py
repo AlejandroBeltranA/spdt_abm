@@ -13,6 +13,12 @@ from typing import Any, Dict, Optional
 import yaml
 
 DEFAULT_PATH = Path(__file__).with_name("config_defaults.yaml")
+# The shipped calibration that makes the model accurate. Overlays the defaults
+# above; every run entry point defaults to this so the ABM runs accurately on
+# just the data. Produced and re-promoted by the paper's calibration pipeline
+# (see research/applied/RUNBOOK.md). None of the fit scripts read it, so the
+# calibration still fits against the neutral defaults.
+CALIBRATED_PATH = Path(__file__).with_name("calibrated_config.yaml")
 
 
 @dataclass
@@ -102,4 +108,4 @@ def load_config(config_path: Optional[str | Path] = None) -> ModelConfig:
     return ModelConfig(raw=base)
 
 
-__all__ = ["ModelConfig", "load_config", "DEFAULT_PATH"]
+__all__ = ["ModelConfig", "load_config", "DEFAULT_PATH", "CALIBRATED_PATH"]

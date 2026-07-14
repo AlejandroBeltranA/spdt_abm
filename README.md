@@ -7,7 +7,7 @@ Simulates hour-by-hour residential energy demand for every dwelling in a GeoJSON
 - **Meter-anchored baseline:** fixed 0.40 kWh/h with mild area/property-type scaling; structural multipliers only affect heating. Baseline capped at 1.5 kWh/h.
 - **Duty-cycle heating + caps:** sublinear area scaling, bounded property-type multipliers, 20 kWh/h total cap with per-component clip diagnostics.
 - **Scenario testing v2:** ready-to-wire policy selectors (income/education, top users, kids vs elderly, social rent) documented in `docs/scenario_testing_v2_guide.md`.
-- **DESNZ calibration notebook:** `notebooks/energy-model-calibration.ipynb` compares ABM vs DESNZ per LSOA and exports batch runs.
+- **DESNZ calibration notebook:** `notebooks/energy-model-validation.ipynb` compares ABM vs DESNZ per LSOA and exports batch runs.
 
 ---
 
@@ -21,34 +21,60 @@ household_energy/            # Core package
 └── climate.py               # ClimateField helpers
 
 notebooks/
-├── energy-model-calibration.ipynb   # DESNZ alignment, LSOA batch runs
+├── energy-model-validation.ipynb    # DESNZ alignment, LSOA batch runs
 ├── household_energy_abm_tutorial.ipynb
-├── scenario_testing_v2.ipynb        # Policy scenarios (mirrors docs guide)
-└── enrichment_check.py              # HIDP/EPC enrichment sanity
+├── abm_end_to_end_tutorial.ipynb    # Full walkthrough (funder demo, with outputs)
+├── policy_scenarios_detailed.ipynb  # Step-by-step policy scenario analysis
+└── policy_scenarios_summary.ipynb   # All scenarios in one go, with maps
 
 docs/
 └── scenario_testing_v2_guide.md     # Dashboard-ready scenario guide
 
 scripts/
-└── run_lsoa_batch.py                # Batch LSOA runner (per-dwelling outputs)
+├── enrichment_check.py              # HIDP/EPC enrichment sanity check
+└── serl_grid_search.py              # SERL calibration grid search (+ others)
+
 ```
 
 ---
 
 ## Setup
 ```bash
-python -m venv esa_mesa
-source esa_mesa/bin/activate
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 # dev mode for CLI imports
 pip install -e .
 ```
 
 Inputs (git-ignored):
-- Household GeoJSON with UPRN + attributes (`data/abm_households_*.geojson`)
-- Hourly climate parquet (`data/hourly_climate.parquet`)
-- Optional HIDP enrichment CSV (`data/hidp_uprn_matches_tiered.csv`)
-- DESNZ Excel workbooks for validation (electricity + gas)
+- Household GeoJSON with UPRN + EPC attributes (`data/epc_abm_*.geojson`)
+- Hourly ERA5 climate parquet — two versions:
+  - `data/ncc_2t_timeseries_2010_2026.parquet` — historical period for DESNZ validation
+  - `data/ncc_2t_timeseries_2010_2039.parquet` — extended to 2039 for future scenario runs
+- Optional HIDP enrichment CSV (`data/hidp_uprn_matches_tiered.csv`) — required for policy scenario cohort masks
+- DESNZ Excel workbooks for validation (electricity + gas, per LSOA)
+
+See `notebooks/README.md` for the recommended reading order and a map from notebook to paper section.
+
+---
+
+## Two layers: running the model vs. making it accurate
+
+The repo is layered so the engine and the science that calibrates it stay separable, and the same engine carries forward to later papers.
+
+- **`household_energy/` — the ABM engine ("how to run").** Everything you need to simulate hour-by-hour demand for a stock. It ships with `household_energy/calibrated_config.yaml`, the fitted parameters that make it accurate, and **every CLI entry point defaults to that config**. So with the data in `data/`, the model runs accurately out of the box, no calibration step and no extra flags. Pass `--config defaults` to run uncalibrated, or `--config <path>` to use a different calibration.
+
+- **`research/applied/` — the Applied Energy paper ("how to make it accurate").** The calibration and validation pipeline that *produces* the shipped config: the six SERL fits, the `calibrate_serl.py` orchestrator, and the spatial-transfer validation. See [`research/applied/RUNBOOK.md`](research/applied/RUNBOOK.md). To regenerate the calibration and re-promote it into the engine:
+
+  ```bash
+  # 1. fit on the SERL panel (anchors + gas slope + building-type mults + the six fits)
+  python research/applied/scripts/calibrate_serl.py --years 2023 --label v5_phase5b
+  # 2. promote into the engine (ships the model block only, drops provenance/aliases)
+  python research/applied/scripts/promote_config.py
+  ```
+
+  Later papers add their own analysis layer (scenarios, projections) on top of the same engine and the same shipped config.
 
 ---
 
@@ -99,9 +125,15 @@ Outputs live under `results_lsoa/<LSOA>/run_<stamp>/` with `abm_year_<LSOA>_<sta
 ---
 
 ## Key notebooks
-- **Calibration:** `notebooks/energy-model-calibration.ipynb` — loads LSOA batch outputs, computes ABM vs DESNZ per-dwelling kWh, plots ratios, and can rerun batches via `run_lsoa_batch.py`.
-- **Policy scenarios:** `notebooks/scenario_testing_v2.ipynb` — smoke/perf harness for income/education HP grants, top users, kids vs elderly, social rent; aligns with `docs/scenario_testing_v2_guide.md`.
-- **Tutorial:** `notebooks/household_energy_abm_tutorial.ipynb` — end-to-end single-run demo and plotting utilities.
+
+See `notebooks/README.md` for the full reading order and paper section map.
+
+- **Start here:** `notebooks/household_energy_abm_tutorial.ipynb` — MABM design, agent structure, climate coupling, and output collection.
+- **Calibration:** `notebooks/serl_calibration_clean.ipynb` — model parameters derived analytically from SERL Smart Meter data.
+- **Validation:** `notebooks/energy-model-validation.ipynb` — ABM vs DESNZ per-LSOA comparison (2020–2023).
+- **Policy experiments:** `notebooks/policy_scenarios_detailed.ipynb` — step-by-step; `notebooks/policy_scenarios_summary.ipynb` — all scenarios + map.
+- **Future projections:** `notebooks/full_run_example.ipynb` — 2020–2039 long-horizon run.
+- **Funder demo:** `notebooks/abm_end_to_end_tutorial.ipynb` — full pipeline with embedded outputs (do not strip).
 
 ---
 
@@ -117,12 +149,12 @@ Outputs live under `results_lsoa/<LSOA>/run_<stamp>/` with `abm_year_<LSOA>_<sta
 - Retrofit flags: `loft_ins_flag`, `glazing_flag`, etc.
 - Setpoint tweak (e.g., elderly setback)
 
-Reference implementations live in `notebooks/scenario_testing_v2.ipynb` and mirrored in `docs/scenario_testing_v2_guide.md`.
+Reference implementations live in `notebooks/policy_scenarios_detailed.ipynb` (step-by-step) and `notebooks/policy_scenarios_summary.ipynb` (all scenarios + maps); both are documented in `docs/scenario_testing_v2_guide.md`.
 
 ---
 
 ## Validation vs DESNZ
-Use `energy-model-calibration.ipynb`:
+Use `energy-model-validation.ipynb`:
 - Load DESNZ electricity + gas, compute per-dwelling DESNZ kWh (elec meters as denominator).
 - Load ABM batch parquet(s) from `results_lsoa/*/run_*/abm_year_*.parquet`.
 - Compare per LSOA, per year: ABM kWh, DESNZ kWh, ratios; plot and export summaries.
@@ -130,9 +162,9 @@ Use `energy-model-calibration.ipynb`:
 ---
 
 ## Support scripts
-- `scripts/run_lsoa_batch.py` — run per-LSOA batches (agent-level optional) and save annual kWh by LSOA/year.
-- `household_energy/run_lsoa_batch.py` — package entry variant used by notebooks.
-- `make_animation.py` — helper for quick visuals (optional).
+- `energy-run-lsoa` — CLI entry point for per-LSOA batches (agent-level optional), saves annual kWh by LSOA/year. Implemented in `household_energy/run_lsoa_batch.py`.
+- `household_energy/make_animation.py` — helper for per-LSOA animated visualisations (optional).
+- `scripts/` — analysis utilities: SERL calibration grid search, PPT figure generation, scenario plots, enrichment check, notebook smoke test.
 
 ---
 

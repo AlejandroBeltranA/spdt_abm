@@ -23,8 +23,10 @@ household_energy/            # Python package (entry points)
 └── server.py                # Live dashboard
 
 notebooks/
-├── 01-climate-prep.ipynb    # Prepare hourly climate parquet
-└── 02-energy-model-tests.ipynb  # Validation vs DESNZ (2020–2023)
+├── 01-climate-prep.ipynb             # Prepare hourly climate parquet
+├── energy-model-validation.ipynb     # Validation vs DESNZ (2020–2023)
+├── policy_scenarios_detailed.ipynb   # Step-by-step policy scenarios
+└── policy_scenarios_summary.ipynb    # All scenarios in one go, with maps
 
 data/                        # 🔒 Git‑ignored sensitive inputs
 results/                     # Model outputs (git‑ignored)
@@ -56,7 +58,7 @@ This section captures **what the model expects** and **what it does not cover**.
 
 ## 3) System requirements
 
-* **Python:** 3.10 or newer.
+* **Python:** 3.11 or newer.
 * **OS:** Linux/macOS/Windows.
 * **RAM:** 8–16 GB recommended for neighbourhood‑scale runs; increase for city‑wide.
 * **Disk:** Allow several GB for multi‑year hourly outputs.
@@ -68,8 +70,8 @@ This section captures **what the model expects** and **what it does not cover**.
 Create an isolated environment and install dependencies:
 
 ```bash
-python -m venv esa_mesa
-source esa_mesa/bin/activate   # Windows: esa_mesa\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -e .
 ```
@@ -202,7 +204,7 @@ python -m household_energy.analyze \
 
 COMING SOON
 
-Open `notebooks/02-energy-model-tests.ipynb` and:
+Open `notebooks/energy-model-validation.ipynb` and:
 
 1. **Run the windowed model** for 2020–2024 to produce:
 
@@ -259,7 +261,7 @@ Open `notebooks/02-energy-model-tests.ipynb` and:
 
 ## 15) Appendix — Quickstart checklist
 
-* [ ] Python 3.10+ installed.
+* [ ] Python 3.11+ installed.
 * [ ] Virtual environment created & dependencies installed.
 * [ ] GeoJSON and hourly climate parquet placed under `data/`.
 * [ ] 7‑day smoke test completes with outputs in `results/`.

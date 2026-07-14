@@ -1,0 +1,22 @@
+{
+  "title": "Household Energy ABM (SPDT): hour-by-hour residential energy demand for GeoJSON neighbourhoods",
+  "description": "An agent-based model that simulates hour-by-hour residential electricity and gas demand for every dwelling in a GeoJSON neighbourhood, SERL-calibrated and validated against DESNZ subnational consumption (2020-2023), with policy levers for heat-pumps, retrofits, and socio-demographic targeting.",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "MIT",
+  "creators": [
+    {
+      "name": "Beltran, Alejandro",
+      "affiliation": "The Alan Turing Institute"
+    }
+  ],
+  "keywords": [
+    "agent-based model",
+    "residential energy demand",
+    "SERL",
+    "DESNZ",
+    "heat pumps",
+    "energy policy",
+    "Mesa"
+  ]
+}

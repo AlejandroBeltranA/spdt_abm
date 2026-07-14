@@ -14,30 +14,33 @@ Each tick = 1 hour. The model:
 * records per-step metrics via Mesa’s DataCollector.
 """
 
-
-
 from __future__ import annotations
 
-import random
-from typing import Callable, Dict, List, Optional
 
-import geopandas as gpd
+import random
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, TYPE_CHECKING
+
 import mesa
 import mesa_geo as mg
 import numpy as np
 import pandas as pd  # for timezone handling
-import math
 
 from .climate import ClimateField
-from .agent import HouseholdAgent, PersonAgent, PROPERTY_TYPES, SCHEDULE_PROFILES
+from .agent import HouseholdAgent, PersonAgent, PROPERTY_TYPES, PROPERTY_TYPE_MULT_BASE, PROPERTY_TYPE_MULT_HEAT, SCHEDULE_PROFILES
 from .config import load_config, ModelConfig
+
+if TYPE_CHECKING:  # pragma: no cover
+    import geopandas as gpd
+
+WEALTH_BUCKETS = ["very_low", "low", "mid", "high", "very_high"]
 
 # ------------------------------------------------------------------
 # Schedule archetypes (hour-level, simple) used when schedule_type
 # is provided in the household CSV. Leave/return are hours 0–23;
 # None means always at home.
 # ------------------------------------------------------------------
-SCHEDULE_DEFS: Dict[str, tuple[Optional[int], Optional[int]]] = {
+DEFAULT_SCHEDULE_DEFS: Dict[str, tuple[Optional[int], Optional[int]]] = {
     "HOME_ALLDAY":  (None, None),
     "WORK_STD":     (9, 17),
     "WORK_EARLY":   (6, 15),
@@ -49,21 +52,19 @@ SCHEDULE_DEFS: Dict[str, tuple[Optional[int], Optional[int]]] = {
     "OUT_LONG":     (7, 20),
 }
 
-# ------------------------------------------------------------------
-# Schedule archetypes (hour-level, simple) used when schedule_type
-# is provided in the household CSV. Leave/return are hours 0–23;
-# None means always at home.
-# ------------------------------------------------------------------
-SCHEDULE_DEFS: Dict[str, tuple[Optional[int], Optional[int]]] = {
-    "HOME_ALLDAY":  (None, None),
-    "WORK_STD":     (9, 17),
-    "WORK_EARLY":   (6, 15),
-    "WORK_LATE":    (12, 21),
-    "PART_TIME_AM": (8, 13),
-    "PART_TIME_PM": (13, 18),
-    "SCHOOL_RUN":   (9, 15),
-    "STUDENT":      (10, 16),
-    "OUT_LONG":     (7, 20),
+DEFAULT_AWAKE_WINDOWS: Dict[str, tuple[Optional[int], Optional[int]]] = {
+    "HOME_ALLDAY": (7, 23),
+    "WORK_STD": (6, 23),
+    "WORK_EARLY": (5, 22),
+    "WORK_LATE": (7, 24),
+    "PART_TIME_AM": (6, 23),
+    "PART_TIME_PM": (7, 24),
+    "SCHOOL_RUN": (6, 22),
+    "STUDENT": (7, 24),
+    "OUT_LONG": (6, 23),
+    "Parent": (6, 22),
+    "Worker": (6, 23),
+    "Homebody": (7, 23),
 }
 
 
@@ -74,7 +75,7 @@ class EnergyModel(mesa.Model):
 
     def __init__(
         self,
-        gdf: gpd.GeoDataFrame | None = None,
+        gdf: "gpd.GeoDataFrame" | None = None,
         *,
         n_residents_func: Callable[[HouseholdAgent], int] | None = None,
         climate_parquet: Optional[str] = None,
@@ -90,6 +91,8 @@ class EnergyModel(mesa.Model):
         self.current_hour: int = 0
         self.household_agents: List[HouseholdAgent] = []
         self.person_agents: List[PersonAgent] = []
+        self._start_ts_utc: pd.Timestamp | None = None
+        self._config_path = Path(config_path).resolve() if config_path else None
 
         if gdf is None:
             raise ValueError("EnergyModel requires a GeoDataFrame `gdf`.")
@@ -100,32 +103,382 @@ class EnergyModel(mesa.Model):
 
         self.energy_per_person_home: float = float(self.config.model.get("energy_per_person_home", 0.06))
         self.energy_per_person_away: float = float(self.config.model.get("energy_per_person_away", 0.01))
+        self.awake_home_spike_mult: float = float(self.config.model.get("awake_home_spike_mult", 1.0))
+        self.sleep_home_spike_mult: float = float(self.config.model.get("sleep_home_spike_mult", 0.3))
 
-        self.heating_setpoint_C: float = float(self.config.model.get("heating_setpoint_C", 18.5))
+        # Heating trigger temperature — the OUTDOOR ambient temperature
+        # below which space heating engages. Compared against ambient
+        # temperature in agent.apply_climate(); this is *not* an indoor
+        # comfort thermostat setting. Renamed from `heating_setpoint_C`
+        # 2026-05; old config key still accepted (warns once on use).
+        _trig = self.config.model.get("heating_trigger_temp_C")
+        if _trig is None:
+            _trig = self.config.model.get("heating_setpoint_C", 18.5)
+            if "heating_setpoint_C" in self.config.model and "heating_trigger_temp_C" not in self.config.model:
+                import warnings
+                warnings.warn(
+                    "Config key `heating_setpoint_C` is deprecated; use "
+                    "`heating_trigger_temp_C`. The parameter is an outdoor "
+                    "temperature threshold, not an indoor setpoint.",
+                    DeprecationWarning, stacklevel=2,
+                )
+        self.heating_trigger_temp_C: float = float(_trig)
+        # Backwards-compat alias — existing notebooks read m.heating_setpoint_C.
+        self.heating_setpoint_C: float = self.heating_trigger_temp_C
         self.cooling_threshold_C: float = float(self.config.model.get("cooling_threshold_C", 24.0))
+        # `setpoint_setback_C` is the °C drop applied to the heating
+        # setpoint when the dwelling is unoccupied (occupancy_count == 0,
+        # see model.py:1152). Default 2.0 °C reflects typical UK
+        # thermostat-schedule practice (CIBSE Guide A §1.4.6 cites 2–3 °C
+        # daytime setback as standard for occupied/empty regime).
+        #
+        # NOT SERL-fit: SERL's diurnal-by-hour signal does show a clear
+        # night reduction (~80% drop in hourly gas at h02 vs h17, with
+        # higher HD), but that's behavioural setpoint reduction at
+        # bedtime *with residents still home*, while the model applies
+        # setback only when the house is fully empty. The semantics
+        # don't align, so a SERL diurnal fit would over-state the
+        # parameter's effective magnitude. Left at literature value.
+        self.setpoint_setback_C: float = float(self.config.model.get("setpoint_setback_C", 2.0))
         self.heating_slope_kWh_per_deg: float = float(self.config.model.get("heating_slope_kWh_per_deg", 0.05))
+        # Optional fuel-specific base heating slope for electric-heated homes.
+        # SERL fits electric-heated sensitivity far below gas (~0.056 vs ~0.21
+        # kWh/h/°C in 2023); without this, electric homes inherit the gas slope
+        # and over-ramp. None → fall back to the shared slope above.
+        _elec_slope = self.config.model.get("heating_slope_kWh_per_deg_electric", None)
+        self.heating_slope_kWh_per_deg_electric: float | None = (
+            float(_elec_slope) if _elec_slope is not None else None
+        )
         self.cooling_slope_kWh_per_deg: float = float(self.config.model.get("cooling_slope_kWh_per_deg", 0.03))
         self.apply_structural_multipliers: bool = bool(self.config.model.get("apply_structural_multipliers", True))
         # heat-slope shaping / caps
-        self.heat_slope_area_exp: float = float(self.config.model.get("heat_slope_area_exp", 0.6))
+        #
+        # ``heat_slope_area_exp`` is the fallback power-law exponent used by
+        # agent.py when ``heat_slope_area_bands`` is absent. Default 0.811
+        # is the SERL-implied exponent reported by fit_area_scaling.py;
+        # the prior v4 default of 0.6 was unsourced and under-scaled large
+        # dwellings (SERL ratio at 240 m² is 2.62×; (240/75)^0.6 = 2.04×).
+        #
+        # ``heat_slope_area_bands`` (preferred) is a SERL-fitted lookup
+        # ``{band: multiplier}`` keyed on the bands in
+        # research/applied/scripts/fit_area_scaling.py, normalised to the
+        # 51-100 m² reference band. When present it short-circuits the
+        # power-law fallback in agent._compute_heat_slope.
+        self.heat_slope_area_exp: float = float(self.config.model.get("heat_slope_area_exp", 0.811))
+        self.heat_slope_area_bands: dict | None = self.config.model.get("heat_slope_area_bands") or None
         self.heat_slope_min: float = float(self.config.model.get("heat_slope_min", 0.0))
         self.heat_slope_max: float = float(self.config.model.get("heat_slope_max", 0.10))
-        self.max_heat_kwh_per_hour: float = float(self.config.model.get("max_heat_kwh_per_hour", 20.0))
+        _hm = self.config.model.get("heating_months", None)
+        self.heating_months: set | None = set(int(m) for m in _hm) if _hm is not None else None
+        # `max_heat_kwh_per_hour` is the per-dwelling physical heat-output
+        # ceiling (kept post-Phase-1 as a hard cap, not a calibration knob).
+        # Default 24 kW ≈ typical UK combi boiler upper end (CIBSE Domestic
+        # Heating Design Guide). See agent._compute_heat_capacity().
+        self.max_heat_kwh_per_hour: float = float(self.config.model.get("max_heat_kwh_per_hour", 24.0))
         self.max_total_kwh_per_hour: float = float(self.config.model.get("max_total_kwh_per_hour", 20.0))
         self.max_base_kwh_per_hour: float = float(self.config.model.get("max_base_kwh_per_hour", 1.5))
-        self.loss_to_duty_k: float = float(self.config.model.get("loss_to_duty_k", 3.0))
-        self.base_heat_capacity: float = float(self.config.model.get("base_heat_capacity", 8.0))
-        self.heat_capacity_area_exp: float = float(self.config.model.get("heat_capacity_area_exp", 0.5))
-        self.min_heat_capacity: float = float(self.config.model.get("min_heat_capacity", 4.0))
+        # NOTE (2026-06): `loss_to_duty_k`, `base_heat_capacity`,
+        # `heat_capacity_area_exp`, `min_heat_capacity` removed in Phase 1
+        # of the v5 cleanup. Heating is now linear (`heat = slope × HD`)
+        # capped at a per-dwelling physical capacity computed from floor
+        # area alone — see agent._compute_heat_capacity(). Configs that
+        # still set these keys are silently ignored.
+        # Intraday structure: explicit profiles for heating and DHW.
+        # Profiles are 24-element arrays normalized to mean=1.0.
+        def _profile24(raw: object, default: list[float]) -> np.ndarray:
+            vals = default
+            if isinstance(raw, (list, tuple)) and len(raw) == 24:
+                try:
+                    vals = [float(x) for x in raw]
+                except Exception:
+                    vals = default
+            arr = np.asarray(vals, dtype=float)
+            arr = np.where(np.isfinite(arr) & (arr > 0), arr, np.nan)
+            if np.isnan(arr).any():
+                arr = np.asarray(default, dtype=float)
+            m = float(np.mean(arr))
+            if not np.isfinite(m) or m <= 0:
+                return np.ones(24, dtype=float)
+            return arr / m
+
+        self.heating_profile_24h: np.ndarray = _profile24(
+            self.config.model.get("heating_profile_24h"),
+            [1.20, 1.15, 1.10, 1.00, 0.95, 1.00, 1.10, 1.20, 1.05, 0.95, 0.90, 0.90,
+             0.90, 0.90, 0.90, 0.95, 1.00, 1.10, 1.25, 1.30, 1.25, 1.20, 1.15, 1.10],
+        )
+        self.dhw_profile_24h: np.ndarray = _profile24(
+            self.config.model.get("dhw_profile_24h"),
+            [0.55, 0.50, 0.45, 0.40, 0.45, 0.75, 1.20, 1.35, 1.10, 0.90, 0.85, 0.85,
+             0.85, 0.85, 0.90, 1.00, 1.10, 1.25, 1.35, 1.30, 1.20, 1.00, 0.80, 0.65],
+        )
+        self.heating_profile_24h_electric: np.ndarray = _profile24(
+            self.config.model.get("heating_profile_24h_electric"),
+            list(self.heating_profile_24h),
+        )
+        self.dhw_profile_24h_electric: np.ndarray = _profile24(
+            self.config.model.get("dhw_profile_24h_electric"),
+            list(self.dhw_profile_24h),
+        )
+        # Baseline (non-presence, non-heating) load diurnal shape. v5 fits the
+        # baseline anchor as a daily *mean* and adds it flat every hour, which
+        # leaves the model's overnight load too high and its evening peak too
+        # shallow versus the SERL diurnal curve. These mean-1.0 profiles reshape
+        # the baseline across the day without moving its daily mean — so annual
+        # totals and every other calibrated parameter are untouched. Default is
+        # flat (all ones) → behaviour identical to pre-profile configs.
+        # Fitted by research/applied/scripts/fit_diurnal_profile.py.
+        self.base_profile_24h_electric: np.ndarray = _profile24(
+            self.config.model.get("base_profile_24h_electric"),
+            [1.0] * 24,
+        )
+        self.base_profile_24h_gas: np.ndarray = _profile24(
+            self.config.model.get("base_profile_24h_gas"),
+            [1.0] * 24,
+        )
+
+        # Mean-1.0 MONTHLY profiles (seasonal analogue of the diurnal profile).
+        # Fitted by research/applied/scripts/fit_monthly_profile.py. Flat (all
+        # ones) → identical to pre-profile configs. heating_month_profile_12,
+        # when present, replaces the hard heating-months on/off gate with a
+        # smooth seasonal ramp; base_profile_12_electric adds the baseline
+        # electricity winter uplift. Both mean-preserving (annual totals fixed).
+        def _profile12(raw):
+            if raw is None:
+                return None
+            arr = np.asarray([float(x) for x in raw], dtype=float)
+            return arr if arr.shape == (12,) else None
+        self.heating_month_profile_12 = _profile12(self.config.model.get("heating_month_profile_12"))
+        self.base_profile_12_electric = _profile12(self.config.model.get("base_profile_12_electric"))
+
+        # ── Schedule-retired SERL-profile architecture (opt-in) ──
+        # When enabled, the model stops simulating per-person leave/return/
+        # wake/sleep clocks. Occupancy is the static resident count and the
+        # diurnal shape comes straight from SERL:
+        #   electric(h) = E_base·base_profile_electric(h)
+        #               + (n_occ - panel_mean)·per_person_slope(h)
+        #   gas heating = slope·HD·heating_profile(h | ambient T)
+        # The retained schedule code is the "behavior hook" for Paper-2
+        # counterfactuals. Default off → legacy schedule path unchanged.
+        self.use_serl_profiles: bool = bool(self.config.model.get("use_serl_profiles", False))
+        self.serl_panel_mean_occupants: float = float(
+            self.config.model.get("panel_mean_occupants", 2.4)
+        )
+        _pp_slope = self.config.model.get("per_person_slope_24h_electric")
+        self.per_person_slope_24h_electric: Optional[np.ndarray] = (
+            np.asarray([float(x) for x in _pp_slope], dtype=float)
+            if isinstance(_pp_slope, (list, tuple)) and len(_pp_slope) == 24 else None
+        )
+        # Heating profile by outdoor-temperature band → sorted (temp, 24-vector)
+        # arrays for linear interpolation by ambient temperature at runtime.
+        _htp = self.config.model.get("heating_temp_profile") or {}
+        self._htp_temps: Optional[np.ndarray] = None
+        self._htp_profiles: list[np.ndarray] = []
+        if _htp:
+            items = sorted(_htp.items(), key=lambda kv: float(kv[1]["temp_mid_C"]))
+            self._htp_temps = np.asarray([float(v["temp_mid_C"]) for _, v in items], dtype=float)
+            self._htp_profiles = [
+                _profile24(v["profile"], [1.0] * 24) for _, v in items
+            ]
+        # Annual-preservation factor for the interpolated heating profiles.
+        # Each band profile is mean-1.0 over the day, but cold hours cluster
+        # overnight, so over a realised year the interpolated multiplier does
+        # not average to 1.0 against degree-hours (drifted annual gas ~-2-3pp).
+        # Computed lazily on the first heating tick (needs climate + clock).
+        self._htp_norm: Optional[float] = None
+        # Off-peak electric heating (storage heaters today; smart/Economy-7 heat
+        # pumps in electrification scenarios) charges overnight, not on the gas
+        # cohort's evening schedule -- while DIRECT electric radiators peak in the
+        # evening like gas. Off-peak homes get this mean-1.0 24h profile (tariff-
+        # driven, hence temperature-independent); direct electric keeps the gas
+        # temperature-conditioned profile. Own annual norm.
+        _hpo = self.config.model.get("heating_profile_24h_offpeak")
+        self._htp_offpeak: Optional[np.ndarray] = (
+            _profile24(_hpo, [1.0] * 24) if _hpo else None
+        )
+        self._htp_offpeak_norm: Optional[float] = None
+        # Assumption: do heat pumps run off-peak (pre-heat overnight) like storage,
+        # or demand-following like a boiler? Default True (grid-oriented scenario);
+        # set False for the demand-following sensitivity. Storage is always off-peak.
+        self.heatpump_offpeak_charging: bool = bool(
+            self.config.model.get("heatpump_offpeak_charging", True))
+        # Heating-fuel misclassification lever: share of a nominally gas-heated
+        # home's space heat routed to the ELECTRICITY meter, by SAP band
+        # (supplementary plug-in / unrecorded electric heating in low-SAP
+        # stock; resistive, so metered kWh are unchanged, only the meter is).
+        # Empty map -> exact previous behaviour.
+        self.elec_heat_share_by_sap: dict = dict(
+            self.config.model.get("elec_heat_share_by_sap") or {})
+
+        self.dhw_daily_kwh_per_home: float = float(self.config.model.get("dhw_daily_kwh_per_home", 0.0))
+        self.dhw_daily_kwh_per_person: float = float(self.config.model.get("dhw_daily_kwh_per_person", 0.0))
+        self.dhw_away_mult: float = float(self.config.model.get("dhw_away_mult", 0.5))
+        # `heating_occupancy_away_mult` is the floor of a continuous
+        # occupancy-share multiplier applied to the heating load (see
+        # agent.py:876). At occ_share=0 (whole house empty for the hour)
+        # heating drops to away_floor x slope x HD; at occ_share=1 (all
+        # residents home) heating is 1.0 x. Default 0.5 reflects the
+        # midpoint of CIBSE TM59-style scheduling assumptions (50%
+        # daytime setback for unoccupied period).
+        #
+        # NOT SERL-fit: SERL's aggregate diurnal panel cannot identify
+        # the per-hour fraction of houses with zero occupants vs
+        # partially-occupied, so we can't separate the "fully empty"
+        # vs "partially-home" energy signal that this parameter governs.
+        # Left at literature/practice default.
+        self.heating_occupancy_away_mult: float = float(self.config.model.get("heating_occupancy_away_mult", 0.5))
+        # AM/PM peak controls used by calibration (S2/W1 stages).
+        self.heating_peak_morning_mult: float = float(self.config.model.get("heating_peak_morning_mult", 1.0))
+        self.heating_peak_evening_mult: float = float(self.config.model.get("heating_peak_evening_mult", 1.0))
+        self.heating_winter_morning_mult: float = float(self.config.model.get("heating_winter_morning_mult", 1.0))
+        self.heating_winter_evening_mult: float = float(self.config.model.get("heating_winter_evening_mult", 1.0))
+        self.dhw_peak_morning_mult: float = float(self.config.model.get("dhw_peak_morning_mult", 1.0))
+        self.dhw_peak_evening_mult: float = float(self.config.model.get("dhw_peak_evening_mult", 1.0))
         # Baseline anchor params
         # Baseline is now a small meter-derived constant; structural multipliers are
         # applied to heating only (see _compute_hourly_base_kwh in agent.py).
         self.use_epc_for_baseline: bool = bool(self.config.model.get("use_epc_for_baseline", False))
         self.baseline_anchor_kwh_per_hour: float = float(self.config.model.get("baseline_anchor_kwh_per_hour", 0.4))
+        self.baseline_anchor_elec_kwh_per_hour: float = float(
+            self.config.model.get("baseline_anchor_elec_kwh_per_hour", self.baseline_anchor_kwh_per_hour)
+        )
+        self.baseline_anchor_gas_kwh_per_hour: float = float(
+            self.config.model.get("baseline_anchor_gas_kwh_per_hour", 0.0)
+        )
+        self.use_separate_fuel_baseline_anchors: bool = bool(
+            self.config.model.get(
+                "use_separate_fuel_baseline_anchors",
+                ("baseline_anchor_elec_kwh_per_hour" in self.config.model)
+                or ("baseline_anchor_gas_kwh_per_hour" in self.config.model),
+            )
+        )
+        # ``wealth_mult_map`` (config-overridable) replaces the hardcoded
+        # 0.75–1.30 wealth-bucket multiplier in agent.add_person_load. v5
+        # calibrate_serl emits an all-1.0 map to neutralise an unsourced
+        # channel; configs without this key keep the legacy hardcoded
+        # spread (set in agent.py for backward compat).
+        self.wealth_mult_map: dict | None = (
+            self.config.model.get("wealth_mult_map") or None
+        )
+
+        # ``baseline_deprivation_mult`` — SERL IMD-quintile baseline gradient,
+        # coerced onto the wealth_bucket quintiles (very_low=most deprived ..
+        # very_high=least). Applied to the electricity baseline in
+        # agent._compute_hourly_base_components, keyed by the dwelling's
+        # ``wealth_bucket`` (or ``imd_quintile`` when a real IMD field is joined).
+        # Inert (all 1.0 / unkeyed) until a per-dwelling deprivation signal exists.
+        self.baseline_deprivation_mult: dict | None = (
+            self.config.model.get("baseline_deprivation_mult") or None
+        )
+
+        # ``baseline_elec_area_bands`` (Phase 5) is the SERL-fitted per-band
+        # lookup for electricity baseline scaling — see
+        # research/applied/scripts/fit_elec_baseline_area.py and agent.py
+        # _baseline_area_multiplier. When present, it short-circuits the
+        # power-law fallback below. The power-law parameters are kept for
+        # backward compatibility with older configs.
+        self.baseline_elec_area_bands: dict | None = (
+            self.config.model.get("baseline_elec_area_bands") or None
+        )
         self.baseline_area_ref_m2: float = float(self.config.model.get("baseline_area_ref_m2", 70.0))
         self.baseline_area_exp: float = float(self.config.model.get("baseline_area_exp", 0.20))
         self.baseline_area_clip = tuple(self.config.model.get("baseline_area_clip", (0.85, 1.25)))
-        self.property_type_mult_base: Dict[str, float] = self.config.model.get("property_type_mult_base", {})
+        self.property_type_mult_base: Dict[str, float] = self.config.model.get("property_type_mult_base", PROPERTY_TYPE_MULT_BASE)
+        self.property_type_mult_base_electric: Dict[str, float] = self.config.model.get(
+            "property_type_mult_base_electric",
+            self.property_type_mult_base,
+        )
+        self.property_type_mult_base_gas: Dict[str, float] = self.config.model.get(
+            "property_type_mult_base_gas",
+            self.property_type_mult_base,
+        )
+        # Heating multipliers: support both legacy `pt_heat_mult` and explicit `property_type_mult_heat`.
+        heat_mult_cfg = self.config.model.get("property_type_mult_heat", None)
+        if heat_mult_cfg is None:
+            heat_mult_cfg = self.config.model.get("pt_heat_mult", None)
+        self.property_type_mult_heat: Dict[str, float] = heat_mult_cfg or PROPERTY_TYPE_MULT_HEAT
+
+        # ── v2 heating-side multipliers (added 2026-06 per calibration v2) ──
+        # Keyed by EPC band string ("A and B", "C", "D", "E", "F and G") and
+        # SERL building_age string. Missing keys default to 1.0 so configs
+        # without v2 fields (v1 / notebook-single-year / default) continue to
+        # produce identical behaviour. property_type_mult_heating_* fields
+        # are READ but not applied — the v1 model already differentiates
+        # heating by floor area (heat_slope_area_exp), and applying a
+        # property-type multiplier on top would double-count. Captured here
+        # so the config remains a faithful record of calibration outputs.
+        self.sap_band_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("sap_band_mult_heating_gas") or {}
+        )
+        self.sap_band_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("sap_band_mult_heating_electric") or {}
+        )
+        # Efficiency gradient on the electricity BASELINE (SERL summer
+        # electricity by EPC band, gas-heated cohort — no space heat in the
+        # signal). Inert ({} -> mult 1.0) for configs that predate it.
+        self.sap_band_mult_base_electric: Dict[str, float] = (
+            self.config.model.get("sap_band_mult_base_electric") or {}
+        )
+        self.building_age_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("building_age_mult_heating_gas") or {}
+        )
+        self.building_age_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("building_age_mult_heating_electric") or {}
+        )
+        # Recorded but unused (see comment above):
+        self.property_type_mult_heating_gas: Dict[str, float] = (
+            self.config.model.get("property_type_mult_heating_gas") or {}
+        )
+        self.property_type_mult_heating_electric: Dict[str, float] = (
+            self.config.model.get("property_type_mult_heating_electric") or {}
+        )
+
+        # Schedules (tunable): schedule archetype defs + WFH + jitter.
+        # - `schedule_defs` maps archetype tag -> (leave_hour, return_hour)
+        # - `type_map` maps incoming household schedule_type -> {leave, return} (direct override)
+        schedules_cfg = getattr(self.config, "schedules", {}) or {}
+        self.schedule_type_map: Dict[str, dict] = schedules_cfg.get("type_map", {}) or {}
+        self.wfh_share: float = float(schedules_cfg.get("wfh_share", 0.0) or 0.0)
+        self.schedule_jitter_hours: int = int(schedules_cfg.get("jitter_hours", 1) or 1)
+        self.default_wake_hour: int = int(schedules_cfg.get("default_wake_hour", 7) or 7)
+        self.default_sleep_hour: int = int(schedules_cfg.get("default_sleep_hour", 23) or 23)
+
+        def _coerce_hour(v: object) -> Optional[int]:
+            if v is None:
+                return None
+            try:
+                i = int(v)
+            except Exception:
+                return None
+            return max(0, min(23, i))
+
+        def _parse_schedule_defs(raw: object) -> Optional[Dict[str, tuple[Optional[int], Optional[int]]]]:
+            if raw is None or not isinstance(raw, dict):
+                return None
+            out: Dict[str, tuple[Optional[int], Optional[int]]] = {}
+            for k, v in raw.items():
+                if v is None:
+                    out[str(k)] = (None, None)
+                    continue
+                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                    out[str(k)] = (_coerce_hour(v[0]), _coerce_hour(v[1]))
+                    continue
+                if isinstance(v, dict):
+                    out[str(k)] = (_coerce_hour(v.get("leave")), _coerce_hour(v.get("return")))
+                    continue
+            return out or None
+
+        sched_defs_raw = (
+            schedules_cfg.get("schedule_defs")
+            or schedules_cfg.get("archetypes")
+            or None
+        )
+        self.schedule_defs = _parse_schedule_defs(sched_defs_raw) or DEFAULT_SCHEDULE_DEFS
+
+        awake_windows_raw = schedules_cfg.get("awake_windows", None)
+        parsed_awake = _parse_schedule_defs(awake_windows_raw) if awake_windows_raw is not None else None
+        self.schedule_awake_windows = dict(DEFAULT_AWAKE_WINDOWS)
+        if parsed_awake:
+            self.schedule_awake_windows.update(parsed_awake)
 
         # --------------- NEW: heat pump params --------------------
         self.boiler_efficiency = 0.90       # for hp effectiveness (boiler η)
@@ -137,12 +490,43 @@ class EnergyModel(mesa.Model):
         }
 
         self.energy_by_type: Dict[str, float] = {t: 0.0 for t in PROPERTY_TYPES}
-        self.energy_by_wealth: Dict[str, float] = dict.fromkeys(["high", "medium", "low"], 0.0)
+        self.energy_by_wealth: Dict[str, float] = dict.fromkeys(WEALTH_BUCKETS, 0.0)
         self.cumulative_energy: float = 0.0
+        self.total_energy: float = 0.0
+        self.total_electric_kwh: float = 0.0
+        self.total_gas_kwh: float = 0.0
+        self.total_other_kwh: float = 0.0
+        self.ambient_mean_tempC: float = float("nan")
 
         self.climate: Optional[ClimateField] = None
         self._clim_idx_per_house: Optional[np.ndarray] = None
         self._t0: int = 0
+
+        # ── Optional: SERL-derived hourly/monthly multipliers by seg3 (emulation layer)
+        # Purpose: allow importing empirical shapes (diurnal + seasonality) by segment
+        # and blending them into the ABM’s per-hour electric/gas outputs.
+        serl_profiles_cfg = self.config.raw.get("serl_profiles", {}) or {}
+        profile_cfg = serl_profiles_cfg
+        self.serl_profiles_enabled: bool = bool(serl_profiles_cfg.get("enabled", False))
+        self.serl_seg3_column: str = str(profile_cfg.get("seg3_column", "none"))
+        self.serl_fallback_value: str = str(profile_cfg.get("fallback_value", "none"))
+        self.serl_profiles_csv: Optional[str] = profile_cfg.get("profiles_csv")
+        self.serl_profiles_alpha: float = float(profile_cfg.get("alpha", 1.0))
+        self.serl_use_hourly: bool = bool(profile_cfg.get("use_hourly", True))
+        self.serl_use_monthly: bool = bool(profile_cfg.get("use_monthly", True))
+        # Internal lookup: (kind, fuel, seg3_value, idx) -> mult
+        self._serl_mult: dict[tuple[str, str, str, int], float] = {}
+
+        if self.serl_profiles_enabled:
+            if not self.serl_profiles_csv:
+                raise ValueError("serl_profiles.enabled=true but serl_profiles.profiles_csv is missing.")
+            self._load_serl_profiles(self._resolve_config_path(self.serl_profiles_csv))
+
+        # ── Optional: lightweight per-hour aggregates by segmentation(s) for calibration.
+        calib_cfg = self.config.raw.get("calibration", {}) or {}
+        self.calibration_segmentations: list[dict] = calib_cfg.get("segmentations", []) or []
+        # stored as list of per-hour records (long form)
+        self._seg_records: list[dict] = []
 
         # Config metadata (propagated to outputs for traceability)
         self.config_name: str = self.config.name
@@ -155,11 +539,33 @@ class EnergyModel(mesa.Model):
         resident_cap = int(self.config.households.get("resident_cap", 10))
         bedroom_mult = self.config.households.get("bedroom_multiplier", {})
         default_residents = int(self.config.households.get("n_residents_default", 2))
+        default_residents_flat = int(self.config.households.get("n_residents_default_flat", default_residents))
+        default_residents_detached = int(self.config.households.get("n_residents_default_detached", default_residents))
+        default_residents_house = int(self.config.households.get("n_residents_default_house", default_residents))
 
         def _default_residents(h: HouseholdAgent) -> int:
             n = getattr(h, "hh_n_people", None)
             if n is None:
-                return default_residents
+                sb = getattr(h, "size_band", None)
+                try:
+                    sb_i = int(sb) if sb is not None else None
+                except Exception:
+                    sb_i = None
+                if sb_i is not None and sb_i > 0:
+                    if sb_i <= 1:
+                        return 1
+                    if sb_i == 2:
+                        return 2
+                    if sb_i == 3:
+                        return 3
+                    return 4
+
+                ptype = (getattr(h, "property_type", "") or "").strip().lower()
+                if "flat" in ptype or "flats" in ptype:
+                    return default_residents_flat
+                if "detached" in ptype and "semi" not in ptype:
+                    return default_residents_detached
+                return default_residents_house
             try:
                 n = int(n)
             except Exception:
@@ -223,8 +629,34 @@ class EnergyModel(mesa.Model):
                 crs=gdf.crs,
             )
             house.has_calibrated_energy = has_calibrated_energy
+            # Attach SERL segmentation label (if configured) for profile multipliers.
+            if self.serl_profiles_enabled and self.serl_seg3_column and self.serl_seg3_column != "none":
+                try:
+                    v = row.get(self.serl_seg3_column, self.serl_fallback_value)
+                except Exception:
+                    v = self.serl_fallback_value
+                v = self.serl_fallback_value if v is None else str(v).strip()
+                if v == "" or v.lower() in ("nan", "<na>"):
+                    v = self.serl_fallback_value
+                setattr(house, "serl_seg3_value", v)
+
+            # Attach configured calibration segmentation attributes (verbatim), so the model
+            # can compute per-hour aggregates without enabling agent-level DataCollector.
+            for seg in self.calibration_segmentations:
+                try:
+                    attr = str(seg.get("attr") or "").strip()
+                except Exception:
+                    attr = ""
+                if not attr:
+                    continue
+                try:
+                    vv = row.get(attr)
+                except Exception:
+                    vv = None
+                setattr(house, attr, vv)
             # recompute heat slope in case config differs from default
-            house.heat_slope_kWh_per_deg = house._compute_heat_slope(self.heating_slope_kWh_per_deg)
+            # (fuel-specific base slope: electric homes use the electric slope)
+            house.heat_slope_kWh_per_deg = house._compute_heat_slope(house._model_base_heat_slope())
             self.household_agents.append(house)
             self.space.add_agents([house])
 
@@ -259,6 +691,7 @@ class EnergyModel(mesa.Model):
             if climate_start is None:
                 climate_start = self.climate.times[0]
             self._t0 = self.climate.time_index_for(climate_start)
+            self._start_ts_utc = pd.to_datetime(climate_start, utc=True)
 
             for h in self.household_agents:
                 h.ambient_tempC = float("nan")
@@ -280,17 +713,27 @@ class EnergyModel(mesa.Model):
         uid_counter = 0
         legacy_profiles = self.config.schedules.get("default_profiles") or SCHEDULE_PROFILES
 
-        rng_sched = random.Random(12345)  # deterministic schedule jitter per run
-
-        def _jitter(hr: Optional[int]) -> Optional[int]:
+        def _jitter(hr: Optional[int], rng_local: random.Random) -> Optional[int]:
             if hr is None:
                 return None
-            j = rng_sched.randint(-1, 1)
+            jmax = max(0, int(getattr(self, "schedule_jitter_hours", 1)))
+            if jmax <= 0:
+                return int(max(0, min(23, hr)))
+            j = rng_local.randint(-jmax, jmax)
             return int(max(0, min(23, hr + j)))
 
-        def _schedule_tuple(tag: str) -> tuple[Optional[int], Optional[int]]:
-            leave, ret = SCHEDULE_DEFS.get(tag, (None, None))
-            return _jitter(leave), _jitter(ret)
+        def _schedule_tuple(tag: str, rng_local: random.Random) -> tuple[Optional[int], Optional[int]]:
+            leave, ret = self.schedule_defs.get(tag, (None, None))
+            return _jitter(leave, rng_local), _jitter(ret, rng_local)
+
+        def _awake_tuple(tag: str, rng_local: random.Random) -> tuple[Optional[int], Optional[int]]:
+            wake, sleep = self.schedule_awake_windows.get(
+                tag,
+                (self.default_wake_hour, self.default_sleep_hour),
+            )
+            wake = _coerce_hour(wake)
+            sleep = 23 if sleep == 24 else _coerce_hour(sleep)
+            return _jitter(wake, rng_local), _jitter(sleep, rng_local)
 
         # Map household-level schedule_type (if present) to per-person leave/return.
         # Falls back to legacy Parent/Worker/Homebody when schedule_type is missing/unknown.
@@ -311,41 +754,80 @@ class EnergyModel(mesa.Model):
 
             people: list[dict] = []
 
-            if stype == "retired_household":
+            rng_local = random.Random(hash(str(getattr(h, "unique_id", id(h)))) & 0xFFFFFFFF)
+
+            def _add(tag: str):
+                # Optional work-from-home: convert some working profiles to HOME_ALLDAY.
+                if tag in ("WORK_STD", "WORK_EARLY", "WORK_LATE", "PART_TIME_AM", "PART_TIME_PM", "OUT_LONG"):
+                    if float(getattr(self, "wfh_share", 0.0)) > 0 and rng_local.random() < float(getattr(self, "wfh_share", 0.0)):
+                        tag = "HOME_ALLDAY"
+                leave, ret = _schedule_tuple(tag, rng_local)
+                wake, sleep = _awake_tuple(tag, rng_local)
+                people.append(
+                    {
+                        "role": "adult",
+                        "schedule_profile": tag,
+                        "leave": leave,
+                        "return": ret,
+                        "wake": wake,
+                        "sleep": sleep,
+                    }
+                )
+
+            # Direct override by schedule_type → hours (from config `schedules.type_map`)
+            if stype and stype in getattr(self, "schedule_type_map", {}):
+                m = getattr(self, "schedule_type_map", {}).get(stype) or {}
+                leave = _jitter(_coerce_hour(m.get("leave")), rng_local)
+                ret = _jitter(_coerce_hour(m.get("return")), rng_local)
+                wake = _jitter(_coerce_hour(m.get("wake", self.default_wake_hour)), rng_local)
+                sleep_v = m.get("sleep", self.default_sleep_hour)
+                sleep = _jitter(23 if sleep_v == 24 else _coerce_hour(sleep_v), rng_local)
                 for _ in range(n_adults):
-                    leave, ret = _schedule_tuple("HOME_ALLDAY")
-                    people.append({"role": "adult", "schedule_profile": "HOME_ALLDAY", "leave": leave, "return": ret})
-            elif stype == "unemployed_or_inactive":
-                for _ in range(n_adults):
-                    tag = "PART_TIME_PM" if rng_sched.random() < 0.3 else "HOME_ALLDAY"
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
-            elif stype == "working_adult_household":
-                for _ in range(n_adults):
-                    tag = "WORK_STD"
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
-            elif stype == "dual_earner_household":
-                for i in range(n_adults):
-                    tag = "WORK_STD" if i == 0 else ("WORK_EARLY" if rng_sched.random() < 0.5 else "WORK_LATE")
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
-            elif stype == "student_household":
-                for _ in range(n_adults):
-                    tag = "STUDENT"
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
-            elif stype == "family_with_children":
-                # adults
-                for i in range(n_adults):
-                    tag = "SCHOOL_RUN" if i == 0 else "WORK_STD"
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
-            elif stype == "single_parent_with_children":
-                for _ in range(n_adults):
-                    tag = "PART_TIME_AM" if rng_sched.random() < 0.6 else "SCHOOL_RUN"
-                    leave, ret = _schedule_tuple(tag)
-                    people.append({"role": "adult", "schedule_profile": tag, "leave": leave, "return": ret})
+                    people.append(
+                        {
+                            "role": "adult",
+                            "schedule_profile": stype,
+                            "leave": leave,
+                            "return": ret,
+                            "wake": wake,
+                            "sleep": sleep,
+                        }
+                    )
+                for _ in range(n_children):
+                    tag = "SCHOOL_RUN"
+                    c_leave, c_ret = _schedule_tuple(tag, rng_local)
+                    c_wake, c_sleep = _awake_tuple(tag, rng_local)
+                    people.append(
+                        {
+                            "role": "child",
+                            "schedule_profile": tag,
+                            "leave": c_leave,
+                            "return": c_ret,
+                            "wake": c_wake,
+                            "sleep": c_sleep,
+                        }
+                    )
+                return people
+
+            handlers = {
+                "retired_household": lambda: [_add("HOME_ALLDAY") for _ in range(n_adults)],
+                "unemployed_or_inactive": lambda: [
+                    _add("PART_TIME_PM" if rng_local.random() < 0.3 else "HOME_ALLDAY") for _ in range(n_adults)
+                ],
+                "working_adult_household": lambda: [_add("WORK_STD") for _ in range(n_adults)],
+                "dual_earner_household": lambda: [
+                    _add("WORK_STD" if i == 0 else ("WORK_EARLY" if rng_local.random() < 0.5 else "WORK_LATE"))
+                    for i in range(n_adults)
+                ],
+                "student_household": lambda: [_add("STUDENT") for _ in range(n_adults)],
+                "family_with_children": lambda: [_add("SCHOOL_RUN" if i == 0 else "WORK_STD") for i in range(n_adults)],
+                "single_parent_with_children": lambda: [
+                    _add("PART_TIME_AM" if rng_local.random() < 0.6 else "SCHOOL_RUN") for _ in range(n_adults)
+                ],
+            }
+
+            if stype in handlers:
+                handlers[stype]()
             else:
                 # Fallback to legacy profiles
                 for _ in range(n_people):
@@ -356,6 +838,8 @@ class EnergyModel(mesa.Model):
                             "schedule_profile": prof["name"],
                             "leave": prof["leave"],
                             "return": prof["return"],
+                            "wake": _coerce_hour(prof.get("wake", self.default_wake_hour)),
+                            "sleep": _coerce_hour(prof.get("sleep", self.default_sleep_hour)),
                         }
                     )
                 return people
@@ -363,8 +847,18 @@ class EnergyModel(mesa.Model):
             # add children schedules
             for _ in range(n_children):
                 tag = "SCHOOL_RUN"
-                leave, ret = _schedule_tuple(tag)
-                people.append({"role": "child", "schedule_profile": tag, "leave": leave, "return": ret})
+                leave, ret = _schedule_tuple(tag, rng_local)
+                wake, sleep = _awake_tuple(tag, rng_local)
+                people.append(
+                    {
+                        "role": "child",
+                        "schedule_profile": tag,
+                        "leave": leave,
+                        "return": ret,
+                        "wake": wake,
+                        "sleep": sleep,
+                    }
+                )
 
             return people
 
@@ -372,7 +866,10 @@ class EnergyModel(mesa.Model):
             n_people = n_residents_func(house)
             scheds = _assign_household_schedules(house, n_people)
             for sched in scheds:
-                wealth = random.choice(["high", "medium", "low"])
+                w = getattr(house, "wealth_bucket", None)
+                if w is None:
+                    rng_w = random.Random(hash(str(house.unique_id)) & 0xFFFFFFFF)
+                    w = rng_w.choice(["very_low", "low", "mid", "high", "very_high"])
                 person = PersonAgent(
                     unique_id=f"{house.unique_id}_{uid_counter}",
                     model=self,
@@ -380,7 +877,9 @@ class EnergyModel(mesa.Model):
                     schedule_profile=sched["schedule_profile"],
                     leave_hour=sched.get("leave"),
                     return_hour=sched.get("return"),
-                    wealth=wealth,
+                    wake_hour=sched.get("wake"),
+                    sleep_hour=sched.get("sleep"),
+                    wealth=w,
                     sap=house.sap_rating,
                 )
                 self.person_agents.append(person)
@@ -394,19 +893,15 @@ class EnergyModel(mesa.Model):
         make_wealth_getter = lambda grp: (lambda m: m.energy_by_wealth.get(grp, 0))
 
         def _mean_ambient_temp(m) -> float:
-            vals = [getattr(h, "ambient_tempC", np.nan) for h in m.household_agents]
-            if not vals:
-                return float("nan")
-            arr = np.array(vals, dtype=float)
-            finite = arr[np.isfinite(arr)]
-            if finite.size == 0:
-                return float("nan")
-            return float(np.nanmean(arr))
+            return float(getattr(m, "ambient_mean_tempC", float("nan")))
 
         model_reporters = {
             **{t: make_type_getter(t) for t in PROPERTY_TYPES},
-            **{w: make_wealth_getter(w) for w in ["high", "medium", "low"]},
-            "total_energy": lambda m: sum(h.energy_consumption for h in m.household_agents),
+            **{w: make_wealth_getter(w) for w in WEALTH_BUCKETS},
+            "total_energy": lambda m: float(getattr(m, "total_energy", 0.0)),
+            "total_electric_kwh": lambda m: float(getattr(m, "total_electric_kwh", 0.0)),
+            "total_gas_kwh": lambda m: float(getattr(m, "total_gas_kwh", 0.0)),
+            "total_other_kwh": lambda m: float(getattr(m, "total_other_kwh", 0.0)),
             "cumulative_energy": lambda m: m.cumulative_energy,
             "ambient_mean_tempC": _mean_ambient_temp,
             "climate_hour_index": lambda m: m.current_hour,
@@ -423,6 +918,12 @@ class EnergyModel(mesa.Model):
             "ambient_tempC": lambda a: getattr(a, "ambient_tempC", float("nan")),
             "climate_heating_kWh": lambda a: getattr(a, "climate_heating_kWh", 0.0),
             "climate_cooling_kWh": lambda a: getattr(a, "climate_cooling_kWh", 0.0),
+            "base_kwh": lambda a: getattr(a, "base_kwh", 0.0),
+            "heat_kwh": lambda a: getattr(a, "heat_kwh", 0.0),
+            "spike_kwh": lambda a: getattr(a, "spike_kwh", 0.0),
+            "electric_kwh": lambda a: getattr(a, "electric_kwh", 0.0),
+            "gas_kwh": lambda a: getattr(a, "gas_kwh", 0.0),
+            "other_kwh": lambda a: getattr(a, "other_kwh", 0.0),
             # static attributes for analysis
             "property_type": lambda a: getattr(a, "property_type", None),
             "sap_rating": lambda a: getattr(a, "sap_rating", None),
@@ -456,6 +957,7 @@ class EnergyModel(mesa.Model):
             "size_band": lambda a: getattr(a, "size_band", None),
             "schedule_type": lambda a: getattr(a, "schedule_type", None),
             "schedule_profile": lambda a: getattr(a, "schedule_profile", None),
+            "awake": lambda a: getattr(a, "awake", None),
         }
 
         # NEW: split collectors → model every step; agent downsampled
@@ -476,95 +978,573 @@ class EnergyModel(mesa.Model):
     def local_hour(self) -> int:
         return int((self._clock0 + self.current_hour) % 24)
 
+    def _compute_htp_norm(self) -> float:
+        """Annual-preservation factor for the SERL temperature-conditioned
+        heating profiles.
+
+        k = sum(HD_t * month_mult_t * interp_mult_t) / sum(HD_t * month_mult_t)
+        over the first simulated year of this run's climate window, using the
+        city-mean temperature and the same clock as the tick loop. Dividing
+        the hourly multiplier by k makes the reshaping exactly
+        annual-preserving: total heating equals what the calibrated slope
+        dictates, and the profile only moves it BETWEEN hours."""
+        try:
+            if (self.climate is None or self._htp_temps is None
+                    or self._start_ts_utc is None):
+                return 1.0
+            t0 = int(self._t0)
+            n = int(min(8760, len(self.climate.times) - t0))
+            if n <= 0:
+                return 1.0
+            with np.errstate(all="ignore"):
+                Tm = np.nanmean(self.climate.temps[t0:t0 + n, :].astype(float), axis=1)
+            ok = np.isfinite(Tm)
+            if not ok.any():
+                return 1.0
+            db = 0.5                                   # thermostat deadband, as in agent.apply_climate
+            hd = np.where(ok, np.maximum(0.0, (float(self.heating_trigger_temp_C) - Tm) - db), 0.0)
+            # month multiplier, on the same local clock as the tick loop
+            if self.heating_month_profile_12 is not None:
+                months = (pd.date_range(self._start_ts_utc, periods=n, freq="h")
+                          .tz_convert(self._local_tz).month.to_numpy())
+                mm = np.asarray(self.heating_month_profile_12, dtype=float)[months - 1]
+            else:
+                mm = np.ones(n)
+            # interpolated hourly multiplier, on the tick loop's local_hour clock
+            hours = (int(self._clock0) + 1 + np.arange(n)) % 24
+            prof = np.stack(self._htp_profiles)        # [bands, 24]
+            at_hour = prof[:, hours]                   # [bands, n]
+            mult = np.ones(n)
+            for i in range(n):
+                if ok[i]:
+                    mult[i] = np.interp(Tm[i], self._htp_temps, at_hour[:, i])
+            w = hd * mm
+            k = float((w * mult).sum() / w.sum()) if w.sum() > 0 else 1.0
+            return 1.0 / k if k > 0 else 1.0
+        except Exception:
+            return 1.0
+
+    def _compute_flat_diurnal_norm(self, profile: np.ndarray) -> float:
+        """Annual-preservation factor for a fixed 24h heating profile (electric
+        storage). Same HD-weighted normalisation as ``_compute_htp_norm`` but the
+        hourly multiplier is the profile indexed by hour (no temperature interp),
+        so total electric heating equals what the slope dictates and the profile
+        only shifts it between hours."""
+        try:
+            if self.climate is None or self._start_ts_utc is None or profile is None:
+                return 1.0
+            t0 = int(self._t0)
+            n = int(min(8760, len(self.climate.times) - t0))
+            if n <= 0:
+                return 1.0
+            with np.errstate(all="ignore"):
+                Tm = np.nanmean(self.climate.temps[t0:t0 + n, :].astype(float), axis=1)
+            ok = np.isfinite(Tm)
+            if not ok.any():
+                return 1.0
+            db = 0.5
+            hd = np.where(ok, np.maximum(0.0, (float(self.heating_trigger_temp_C) - Tm) - db), 0.0)
+            if self.heating_month_profile_12 is not None:
+                months = (pd.date_range(self._start_ts_utc, periods=n, freq="h")
+                          .tz_convert(self._local_tz).month.to_numpy())
+                mm = np.asarray(self.heating_month_profile_12, dtype=float)[months - 1]
+            else:
+                mm = np.ones(n)
+            hours = (int(self._clock0) + 1 + np.arange(n)) % 24
+            mult = np.asarray(profile, dtype=float)[hours]
+            w = hd * mm
+            k = float((w * mult).sum() / w.sum()) if w.sum() > 0 else 1.0
+            return 1.0 / k if k > 0 else 1.0
+        except Exception:
+            return 1.0
+
+    def _current_local_month(self) -> Optional[int]:
+        if self._start_ts_utc is None:
+            return None
+        hour_start_utc = self._start_ts_utc + pd.to_timedelta(self.current_hour - 1, unit="h")
+        try:
+            return int(hour_start_utc.tz_convert(self._local_tz).month)
+        except Exception:
+            return None
+
+    def _resolve_config_path(self, raw_path: str | Path) -> Path:
+        path = Path(raw_path)
+        if path.is_absolute():
+            return path
+        candidates: list[Path] = []
+        if self._config_path is not None:
+            candidates.append(self._config_path.parent / path)
+        candidates.append(Path(__file__).resolve().parents[1] / path)
+        candidates.append(Path.cwd() / path)
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
+    def _load_serl_profiles(self, csv_path: Path) -> None:
+        if not csv_path.exists():
+            raise FileNotFoundError(f"SERL profiles CSV not found: {csv_path}")
+        df = pd.read_csv(csv_path)
+        req = {"kind", "fuel", "seg3_value", "idx", "mult"}
+        missing = req - set(df.columns)
+        if missing:
+            raise ValueError(f"SERL profiles CSV missing columns: {sorted(missing)} (found {sorted(df.columns)})")
+        for _, r in df.iterrows():
+            kind = str(r["kind"]).strip().lower()
+            fuel = str(r["fuel"]).strip().lower()
+            seg3 = str(r["seg3_value"]).strip()
+            try:
+                idx = int(r["idx"])
+            except Exception:
+                continue
+            try:
+                mult = float(r["mult"])
+            except Exception:
+                continue
+            if not np.isfinite(mult) or mult <= 0:
+                continue
+            self._serl_mult[(kind, fuel, seg3, idx)] = mult
+
+    def _serl_multiplier(self, *, kind: str, fuel: str, seg3_value: str, idx: int) -> float:
+        """Return SERL multiplier for (kind,fuel,seg3,idx) with fallback to baseline and 1.0."""
+        key = (kind, fuel, seg3_value, idx)
+        if key in self._serl_mult:
+            return float(self._serl_mult[key])
+        # Fallback to baseline seg3_value if present
+        key2 = (kind, fuel, self.serl_fallback_value, idx)
+        if key2 in self._serl_mult:
+            return float(self._serl_mult[key2])
+        return 1.0
+
+    def _apply_serl_profile_multipliers(self) -> None:
+        """Scale per-household electric/gas kWh for this hour using SERL-derived multipliers."""
+        if not self.serl_profiles_enabled:
+            return
+        alpha = float(max(0.0, min(1.0, self.serl_profiles_alpha)))
+        if alpha <= 0:
+            return
+        h = self.local_hour()
+        m = self._current_local_month()
+        for house in self.household_agents:
+            seg3 = str(getattr(house, "serl_seg3_value", self.serl_fallback_value) or self.serl_fallback_value)
+            me = 1.0
+            mg = 1.0
+            if self.serl_use_hourly:
+                me *= self._serl_multiplier(kind="hourly", fuel="electric", seg3_value=seg3, idx=h)
+                mg *= self._serl_multiplier(kind="hourly", fuel="gas", seg3_value=seg3, idx=h)
+            if self.serl_use_monthly and m is not None:
+                me *= self._serl_multiplier(kind="monthly", fuel="electric", seg3_value=seg3, idx=int(m))
+                mg *= self._serl_multiplier(kind="monthly", fuel="gas", seg3_value=seg3, idx=int(m))
+
+            # Blend: alpha=0 -> no change, alpha=1 -> full SERL multiplier
+            me = (1.0 - alpha) + alpha * float(me)
+            mg = (1.0 - alpha) + alpha * float(mg)
+
+            house.electric_kwh = float(getattr(house, "electric_kwh", 0.0)) * me
+            house.gas_kwh = float(getattr(house, "gas_kwh", 0.0)) * mg
+            # keep other_kwh untouched
+            house.energy_consumption = float(house.electric_kwh) + float(house.gas_kwh) + float(getattr(house, "other_kwh", 0.0))
+
+    def _apply_intraday_profiles(self) -> None:
+        """Apply explicit 24h structure to heating and DHW.
+
+        - Heating: modulate climate-driven `heat_kwh` by hourly profile.
+        - DHW: inject additional time-of-day load routed by heating fuel bucket.
+        """
+        h_idx = self.local_hour()
+        month = self._current_local_month()
+        is_winter = month in {11, 12, 1, 2, 3}
+
+        heat_base_gas = float(self.heating_profile_24h[h_idx]) if 0 <= h_idx < 24 else 1.0
+        heat_base_elec = float(self.heating_profile_24h_electric[h_idx]) if 0 <= h_idx < 24 else 1.0
+        dhw_base_gas = float(self.dhw_profile_24h[h_idx]) if 0 <= h_idx < 24 else 1.0
+        dhw_base_elec = float(self.dhw_profile_24h_electric[h_idx]) if 0 <= h_idx < 24 else 1.0
+        am_peak = 6 <= h_idx <= 9
+        pm_peak = 17 <= h_idx <= 21
+
+        # SERL temperature-conditioned heating profile (schedule-retired path).
+        # The hour's heating multiplier is interpolated from the per-band SERL
+        # profiles by the current outdoor temperature, replacing the fixed
+        # heating_profile_24h and the AM/PM peak overlays.
+        serl_heat = self.use_serl_profiles and self._htp_temps is not None
+        heat_mult_serl = 1.0
+        if serl_heat and 0 <= h_idx < 24:
+            T = float(self.ambient_mean_tempC)
+            if np.isfinite(T):
+                vals = np.array([p[h_idx] for p in self._htp_profiles], dtype=float)
+                if self._htp_norm is None:
+                    self._htp_norm = self._compute_htp_norm()
+                heat_mult_serl = float(np.interp(T, self._htp_temps, vals)) * self._htp_norm
+
+        # Off-peak electric heating (storage heaters, and heat pumps run on a smart
+        # /Economy-7 tariff that pre-heats overnight) gets the overnight-charge
+        # profile; everything else -- gas, and DIRECT electric radiators, which peak
+        # in the evening like gas -- keeps the temperature-conditioned profile. The
+        # off-peak multiplier is tariff-driven, so temperature-independent (one value
+        # per hour). Whether heat pumps count as off-peak is a documented assumption
+        # toggled by ``heatpump_offpeak_charging`` (default True); storage always is.
+        heat_mult_serl_offpeak = heat_mult_serl
+        if serl_heat and self._htp_offpeak is not None and 0 <= h_idx < 24:
+            if self._htp_offpeak_norm is None:
+                self._htp_offpeak_norm = self._compute_flat_diurnal_norm(self._htp_offpeak)
+            heat_mult_serl_offpeak = float(self._htp_offpeak[h_idx]) * self._htp_offpeak_norm
+
+        for house in self.household_agents:
+            bucket = house._heating_fuel_bucket() if hasattr(house, "_heating_fuel_bucket") else "other"
+            dhw_share = dhw_base_elec if bucket == "electric" else dhw_base_gas
+
+            if serl_heat:
+                is_offpeak = getattr(house, "_is_offpeak_elec_heat", None)
+                if is_offpeak is None:
+                    _mhs = str(getattr(house, "main_heating_system", "") or "").lower()
+                    is_hp = ("heat pump" in _mhs) or bool(getattr(house, "has_heatpump", False))
+                    is_offpeak = ("storage" in _mhs) or (is_hp and self.heatpump_offpeak_charging)
+                    try:
+                        house._is_offpeak_elec_heat = is_offpeak
+                    except Exception:
+                        pass
+                heat_mult = heat_mult_serl_offpeak if is_offpeak else heat_mult_serl
+            else:
+                heat_mult = heat_base_elec if bucket == "electric" else heat_base_gas
+                if am_peak:
+                    heat_mult *= float(self.heating_peak_morning_mult)
+                    dhw_share *= float(self.dhw_peak_morning_mult)
+                    if is_winter:
+                        heat_mult *= float(self.heating_winter_morning_mult)
+                elif pm_peak:
+                    heat_mult *= float(self.heating_peak_evening_mult)
+                    dhw_share *= float(self.dhw_peak_evening_mult)
+                    if is_winter:
+                        heat_mult *= float(self.heating_winter_evening_mult)
+
+            old_heat = float(getattr(house, "heat_kwh", 0.0))
+            if old_heat > 0:
+                new_heat = old_heat * heat_mult
+                delta = new_heat - old_heat
+                if abs(delta) > 1e-12:
+                    if bucket == "electric":
+                        house.electric_kwh += delta
+                    elif bucket == "gas":
+                        _sh = house._elec_heat_share() if hasattr(house, "_elec_heat_share") else 0.0
+                        house.gas_kwh += delta * (1.0 - _sh)
+                        house.electric_kwh += delta * _sh
+                    else:
+                        house.other_kwh += delta
+                    house.heat_kwh = new_heat
+                    house.climate_heating_kWh = new_heat
+                    house.energy_consumption += delta
+
+            # Add DHW load with reduced away consumption.
+            dhw_home = float(self.dhw_daily_kwh_per_home)
+            dhw_per_person = float(self.dhw_daily_kwh_per_person)
+            n_residents = max(1, len(getattr(house, "residents", []) or []))
+            dhw_daily = dhw_home + (dhw_per_person * n_residents)
+
+            if dhw_daily > 0:
+                occ = int(getattr(house, "occupancy_count", 0) or 0)
+                occ_share = max(0.0, min(1.0, float(occ) / float(n_residents)))
+                away_floor = max(0.0, min(1.0, float(self.dhw_away_mult)))
+                occ_mult = away_floor + (1.0 - away_floor) * occ_share
+                dhw = max(0.0, (dhw_daily * dhw_share / 24.0) * occ_mult)
+                if dhw > 0:
+                    if bucket == "electric":
+                        house.electric_kwh += dhw
+                    elif bucket == "gas":
+                        house.gas_kwh += dhw
+                    else:
+                        house.other_kwh += dhw
+                    house.energy_consumption += dhw
+
+    def _collect_segmentation_aggregates(self) -> None:
+        """Collect per-hour aggregates by configured segmentations.
+
+        Records long-form rows:
+          timestamp_utc, segmentation, value, n_homes, electric_kwh, gas_kwh
+        where electric_kwh/gas_kwh are totals for that group (this hour).
+        """
+        if not self.calibration_segmentations:
+            return
+        if self._start_ts_utc is None:
+            return
+        ts = self._start_ts_utc + pd.to_timedelta(self.current_hour - 1, unit="h")
+        ts = pd.to_datetime(ts, utc=True)
+
+        for seg in self.calibration_segmentations:
+            name = str(seg.get("name") or seg.get("attr") or "").strip() or "seg"
+            attr = str(seg.get("attr") or "").strip()
+            if not attr:
+                continue
+            fallback = str(seg.get("fallback_value") or "none")
+            acc: dict[str, dict[str, float]] = {}
+            for h in self.household_agents:
+                v = getattr(h, attr, None)
+                if v is None:
+                    key = fallback
+                else:
+                    key = str(v).strip()
+                    if key == "" or key.lower() in ("nan", "<na>"):
+                        key = fallback
+                if key not in acc:
+                    acc[key] = {"n": 0.0, "e": 0.0, "g": 0.0}
+                acc[key]["n"] += 1.0
+                acc[key]["e"] += float(getattr(h, "electric_kwh", 0.0))
+                acc[key]["g"] += float(getattr(h, "gas_kwh", 0.0))
+
+            for v, a in acc.items():
+                self._seg_records.append(
+                    {
+                        "timestamp_utc": ts,
+                        "segmentation": name,
+                        "value": v,
+                        "n_homes": int(a["n"]),
+                        "electric_kwh": float(a["e"]),
+                        "gas_kwh": float(a["g"]),
+                    }
+                )
+
+    def get_segmentation_timeseries(self) -> pd.DataFrame:
+        """Return collected segmentation aggregates (long form)."""
+        if not self._seg_records:
+            return pd.DataFrame(columns=["timestamp_utc", "segmentation", "value", "n_homes", "electric_kwh", "gas_kwh"])
+        return pd.DataFrame(self._seg_records)
+
     # ------------------------------------------------------------------
     #  Per-tick update
     # ------------------------------------------------------------------
     def step(self) -> None:
         """Advance simulation by one hour."""
         self.current_hour += 1
+        self._reset_base_loads()
+        if self.use_serl_profiles:
+            self._apply_serl_person_loads()
+        else:
+            self._update_residents()
+        self._apply_climate_tick()
+        self._apply_intraday_profiles()
+        self._apply_serl_profile_multipliers()
+        self._enforce_total_caps()
+        self._aggregate_hour()
+        self._collect_segmentation_aggregates()
+        self._accumulate_annual_kwh()
+        self._collect()
 
-        # 1) reset + add precomputed base load
+    def _accumulate_annual_kwh(self) -> None:
+        """Accumulate per-household annual kWh by UTC year.
+
+        This avoids materializing `agent_dc.get_agent_vars_dataframe()` for common
+        analyses like "top consumers in YEAR".
+
+        Also accumulates per-fuel totals into `annual_electric_kwh_by_year` and
+        `annual_gas_kwh_by_year` (lazy-initialised) so LSOA-level validation
+        against DESNZ (which is fuel-split) does not need the per-step datacollector.
+        """
+        if self._start_ts_utc is None:
+            return
+        hour_start_utc = self._start_ts_utc + pd.to_timedelta(self.current_hour - 1, unit="h")
+        year = int(hour_start_utc.year)
+        for h in self.household_agents:
+            try:
+                h.annual_kwh_by_year[year] = (
+                    float(h.annual_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "energy_consumption", 0.0))
+                )
+                # Per-fuel accumulators — lazy init so existing agents created
+                # before this attribute existed still work.
+                if not hasattr(h, "annual_electric_kwh_by_year"):
+                    h.annual_electric_kwh_by_year = {}
+                if not hasattr(h, "annual_gas_kwh_by_year"):
+                    h.annual_gas_kwh_by_year = {}
+                h.annual_electric_kwh_by_year[year] = (
+                    float(h.annual_electric_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "electric_kwh", 0.0))
+                )
+                h.annual_gas_kwh_by_year[year] = (
+                    float(h.annual_gas_kwh_by_year.get(year, 0.0))
+                    + float(getattr(h, "gas_kwh", 0.0))
+                )
+            except Exception:
+                continue
+
+    def _reset_base_loads(self) -> None:
+        # Mean-1.0 diurnal reshaping of the baseline; flat by default (no-op).
+        h_idx = self.local_hour()
+        prof_e = float(self.base_profile_24h_electric[h_idx]) if 0 <= h_idx < 24 else 1.0
+        prof_g = float(self.base_profile_24h_gas[h_idx]) if 0 <= h_idx < 24 else 1.0
+        # Mean-1.0 monthly reshaping of the electricity baseline (winter uplift);
+        # flat/absent by default (no-op). Mean-preserving → annual total fixed.
+        if self.base_profile_12_electric is not None and self._start_ts_utc is not None:
+            _mo = int((self._start_ts_utc + pd.to_timedelta(self.current_hour - 1, unit="h")).month)
+            prof_e *= float(self.base_profile_12_electric[_mo - 1])
         for h in self.household_agents:
             h.reset_energy()
-            h.base_kwh = h.calc_base_energy()
+            if hasattr(h, "calc_base_electric_energy") and hasattr(h, "calc_base_gas_energy"):
+                base_e = float(h.calc_base_electric_energy()) * prof_e
+                base_g = float(h.calc_base_gas_energy()) * prof_g
+                h.base_kwh = base_e + base_g
+                h.electric_kwh += base_e
+                h.gas_kwh += base_g
+            else:
+                h.base_kwh = h.calc_base_energy()
+                gas_share = h._base_gas_share() if hasattr(h, "_base_gas_share") else 0.0
+                gas_add = h.base_kwh * gas_share * prof_g
+                elec_add = (h.base_kwh - h.base_kwh * gas_share) * prof_e
+                h.base_kwh = gas_add + elec_add
+                h.gas_kwh += gas_add
+                h.electric_kwh += elec_add
             h.energy_consumption += h.base_kwh
 
-        # 2) update residents
+    def _update_residents(self) -> None:
         for p in self.person_agents:
             p.step()
 
-        # 3) climate sampling + apply per dwelling
-        if self.climate is not None and self._clim_idx_per_house is not None:
-            t = self._t0 + (self.current_hour - 1)
-            if 0 <= t < len(self.climate.times):
-                vecP = self.climate.temps_at_index(t)  # shape [P]
-                for h in self.household_agents:
-                    idx = h.clim_idx
-                    tempC = float(vecP[idx]) if idx is not None else float("nan")
-                    occ = h.occupancy_count  # NEW: fast counter (no per-hour loop)
-                    h.apply_climate(
-                        tempC,
-                        heating_setpoint=self.heating_setpoint_C,
-                        cooling_threshold=self.cooling_threshold_C,
-                        heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg),  # CHANGED
-                        cool_slope=self.cooling_slope_kWh_per_deg,
-                        occupancy=occ,
-                    )
+    def _apply_serl_person_loads(self) -> None:
+        """Schedule-retired per-person electricity (the SERL-profile path).
 
-            else:
-                for h in self.household_agents:
-                    h.apply_climate(
-                        float("nan"),
-                        heating_setpoint=self.heating_setpoint_C,
-                        cooling_threshold=self.cooling_threshold_C,
-                        heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg),  # CHANGED
-                        cool_slope=self.cooling_slope_kWh_per_deg,
-                    )
+        Occupancy is the static resident count (no leave/return/wake/sleep
+        simulation). Per-person electricity is a deviation-from-panel-mean term
+        using the SERL per-occupant hourly slope:
 
-        # 4) aggregate by property type + wealth group
-        # enforce total hourly cap per dwelling after all components (base + climate + spikes)
-        max_total = getattr(self, "max_total_kwh_per_hour", None)
-        if max_total is not None:
+            electric += (n_occ - panel_mean) * slope(h)
+
+        consistent with v5's anchor recentring, which baked the average-occupancy
+        per-person load into the baseline anchor. Setting occupancy to the full
+        resident count also makes the heating ``occ_mult`` resolve to 1.0, so the
+        daytime dip comes from the SERL heating profile, not occupancy gating.
+        """
+        h_idx = self.local_hour()
+        slope_h = (
+            float(self.per_person_slope_24h_electric[h_idx])
+            if (self.per_person_slope_24h_electric is not None and 0 <= h_idx < 24)
+            else 0.0
+        )
+        pm = float(self.serl_panel_mean_occupants)
+        for house in self.household_agents:
+            n_res = len(getattr(house, "residents", []) or [])
+            house.occupancy_count = n_res
+            add = (float(n_res) - pm) * slope_h
+            if add != 0.0:
+                house.spike_kwh = float(getattr(house, "spike_kwh", 0.0)) + add
+                house.electric_kwh = float(getattr(house, "electric_kwh", 0.0)) + add
+                house.energy_consumption = float(getattr(house, "energy_consumption", 0.0)) + add
+
+    def _apply_climate_tick(self) -> None:
+        if self.climate is None or self._clim_idx_per_house is None:
+            self.ambient_mean_tempC = float("nan")
+            return
+        t = self._t0 + (self.current_hour - 1)
+        cur_month = (
+            int((self._start_ts_utc + pd.to_timedelta(self.current_hour - 1, unit="h")).month)
+            if self._start_ts_utc is not None else None
+        )
+        # Smooth seasonal heating profile (mean-1.0) supersedes the hard
+        # heating-months on/off gate when present: it scales the slope by month,
+        # ramping down through spring instead of cutting off abruptly.
+        month_heat_mult = 1.0
+        if self.heating_month_profile_12 is not None and cur_month is not None:
+            month_heat_mult = float(self.heating_month_profile_12[cur_month - 1])
+        elif self.heating_months is not None and cur_month is not None:
+            if cur_month not in self.heating_months:
+                for h in self.household_agents:
+                    h.climate_heating_kWh = 0.0
+                    h.heat_kwh = 0.0
+                if 0 <= t < len(self.climate.times):
+                    vecP = self.climate.temps_at_index(t)
+                    temps = [float(vecP[h.clim_idx]) for h in self.household_agents if h.clim_idx is not None]
+                    self.ambient_mean_tempC = float(sum(temps) / len(temps)) if temps else float("nan")
+                else:
+                    self.ambient_mean_tempC = float("nan")
+                return
+        heat_slope_default = self.heating_slope_kWh_per_deg * month_heat_mult
+        cool_slope_default = self.cooling_slope_kWh_per_deg
+        temp_sum = 0.0
+        temp_n = 0
+        if 0 <= t < len(self.climate.times):
+            vecP = self.climate.temps_at_index(t)  # shape [P]
             for h in self.household_agents:
-                if h.energy_consumption > max_total:
-                    pre = h.energy_consumption
-                    clip = pre - max_total
-                    # proportional attribution for diagnostics
-                    base = getattr(h, "base_kwh", 0.0)
-                    heat = getattr(h, "heat_kwh", 0.0)
-                    spike = getattr(h, "spike_kwh", pre - base - heat)
-                    denom = base + heat + spike
-                    if denom <= 0:
-                        fb = fh = fs = 0.0
-                    else:
-                        fb = clip * (base / denom)
-                        fh = clip * (heat / denom)
-                        fs = clip * (spike / denom)
-                    h.cap_clip_total = clip
-                    h.cap_clip_base = fb
-                    h.cap_clip_heat = fh
-                    h.cap_clip_spike = fs
-                    h.energy_consumption = max_total
+                idx = h.clim_idx
+                tempC = float(vecP[idx]) if idx is not None else float("nan")
+                if np.isfinite(tempC):
+                    temp_sum += tempC
+                    temp_n += 1
+                occ = h.occupancy_count
+                setp = self.heating_trigger_temp_C
+                if occ is not None and occ <= 0:
+                    setp = float(self.heating_trigger_temp_C) - float(getattr(self, "setpoint_setback_C", 0.0))
+                h.apply_climate(
+                    tempC,
+                    heating_setpoint=setp,
+                    cooling_threshold=self.cooling_threshold_C,
+                    heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg) * month_heat_mult,
+                    cool_slope=cool_slope_default,
+                    occupancy=occ,
+                )
+        else:
+            for h in self.household_agents:
+                h.apply_climate(
+                    float("nan"),
+                    heating_setpoint=self.heating_trigger_temp_C,
+                    cooling_threshold=self.cooling_threshold_C,
+                    heat_slope=getattr(h, "heat_slope_kWh_per_deg", self.heating_slope_kWh_per_deg) * month_heat_mult,
+                    cool_slope=cool_slope_default,
+                )
+        self.ambient_mean_tempC = (temp_sum / temp_n) if temp_n > 0 else float("nan")
 
-        # 4) aggregate by property type + wealth group
+    def _enforce_total_caps(self) -> None:
+        max_total = getattr(self, "max_total_kwh_per_hour", None)
+        if max_total is None:
+            return
+        for h in self.household_agents:
+            if h.energy_consumption <= max_total:
+                continue
+            pre = h.energy_consumption
+            clip = pre - max_total
+            base = getattr(h, "base_kwh", 0.0)
+            heat = getattr(h, "heat_kwh", 0.0)
+            spike = getattr(h, "spike_kwh", pre - base - heat)
+            denom = base + heat + spike
+            if denom <= 0:
+                fb = fh = fs = 0.0
+            else:
+                fb = clip * (base / denom)
+                fh = clip * (heat / denom)
+                fs = clip * (spike / denom)
+            h.cap_clip_total = clip
+            h.cap_clip_base = fb
+            h.cap_clip_heat = fh
+            h.cap_clip_spike = fs
+            h.energy_consumption = max_total
+
+    def _aggregate_hour(self) -> None:
         self.energy_by_type = {t: 0.0 for t in PROPERTY_TYPES}
+        total = 0.0
+        total_electric = 0.0
+        total_gas = 0.0
+        total_other = 0.0
         for h in self.household_agents:
             ptype = getattr(h, "property_type", "")
             if ptype in self.energy_by_type:
                 self.energy_by_type[ptype] += h.energy_consumption
+            total += float(getattr(h, "energy_consumption", 0.0))
+            total_electric += float(getattr(h, "electric_kwh", 0.0))
+            total_gas += float(getattr(h, "gas_kwh", 0.0))
+            total_other += float(getattr(h, "other_kwh", 0.0))
 
-        self.energy_by_wealth = dict.fromkeys(["high", "medium", "low"], 0.0)
+        self.energy_by_wealth = dict.fromkeys(WEALTH_BUCKETS, 0.0)
         for p in self.person_agents:
+            if p.wealth not in self.energy_by_wealth:
+                self.energy_by_wealth[p.wealth] = 0.0
             self.energy_by_wealth[p.wealth] += p.energy
 
-        # 5) cumulative total
-        tick_total = sum(h.energy_consumption for h in self.household_agents)
-        self.cumulative_energy += tick_total
+        self.total_energy = total
+        self.total_electric_kwh = total_electric
+        self.total_gas_kwh = total_gas
+        self.total_other_kwh = total_other
+        self.cumulative_energy += total
 
-        # 6) collect
+    def _collect(self) -> None:
         self.model_dc.collect(self)
-        if self.agent_dc is not None and (self.current_hour % self.agent_collect_every == 0):  # NEW
-            self.agent_dc.collect(self)  # NEW
+        if self.agent_dc is not None and (self.current_hour % self.agent_collect_every == 0):
+            self.agent_dc.collect(self)
     def _assign_heatpumps(self) -> None:
         """Assign heat pumps to top X% of eligible candidates (or per-class shares).
         Scoring uses expected kWh reduction from lowering the heating slope via HP.

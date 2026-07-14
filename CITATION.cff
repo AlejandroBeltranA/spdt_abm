@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "Household Energy ABM (SPDT): hour-by-hour residential energy demand for GeoJSON neighbourhoods"
+abstract: >-
+  An agent-based model that simulates hour-by-hour residential
+  electricity and gas demand for every dwelling in a GeoJSON
+  neighbourhood, SERL-calibrated and validated against DESNZ
+  subnational consumption (2020-2023), with policy levers for
+  heat-pumps, retrofits, and socio-demographic targeting.
+type: software
+authors:
+  - family-names: Beltran
+    given-names: Alejandro
+    affiliation: "The Alan Turing Institute"
+    # orcid: "https://orcid.org/XXXX-XXXX-XXXX-XXXX"   # TODO: add ORCID
+  # TODO: add co-authors / collaborators before the release, if any
+repository-code: "https://github.com/AlejandroBeltranA/spdt_abm"
+license: MIT
+version: 1.0.0
+date-released: 2026-07-14
+# doi: 10.5281/zenodo.XXXXXXX   # TODO: add the Zenodo concept DOI after the first release

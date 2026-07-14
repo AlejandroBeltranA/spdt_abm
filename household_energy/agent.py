@@ -22,17 +22,119 @@ This version adds light-weight climate hooks to HouseholdAgent:
 - `apply_climate(...)`: converts ambient temp → kWh and adds it to the tick load
 """
 
-
 from __future__ import annotations
 
+
 import math
-import random
+import re
 from typing import Dict, List, Optional
 
-import geopandas as gpd               # only used for typing / IDE hints
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERL segmentation-label helpers (added 2026-06 for calibration v2)
+#
+# Map per-dwelling EPC attributes to the band labels SERL uses, so the
+# v2 heating-side multipliers in the model config can be looked up by
+# the agent's actual characteristics.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _serl_sap_band(sap_rating) -> str:
+    """Map SAP numeric rating (1-100ish) to SERL `currentEnergyRating` band."""
+    try:
+        sap = float(sap_rating)
+    except (TypeError, ValueError):
+        return "D"  # safe default: most common UK band
+    if not math.isfinite(sap) or sap <= 0:
+        return "D"
+    # UK SAP-to-EPC mapping (SAP 2012): A=92+, B=81-91, C=69-80, D=55-68,
+    # E=39-54, F=21-38, G=1-20. SERL collapses to 5 bands.
+    if sap >= 81: return "A and B"
+    if sap >= 69: return "C"
+    if sap >= 55: return "D"
+    if sap >= 39: return "E"
+    return "F and G"
+
+
+_AGE_RANGES = [
+    ("Before 1900",  (0,    1899)),
+    ("1900 - 1929",  (1900, 1929)),
+    ("1930 - 1949",  (1930, 1949)),
+    ("1950 - 1975",  (1950, 1975)),
+    ("1976 - 1990",  (1976, 1990)),
+    ("1991 - 2002",  (1991, 2002)),
+    ("2003 onwards", (2003, 9999)),
+]
+
+
+def _serl_age_band(property_age) -> str:
+    """Map an EPC `property_age` string to SERL `building_age` band.
+
+    EPC uses "YYYY-YYYY" or "Before 1900" or "2003 onwards" style. The mapping
+    handles the common variants (with/without spaces around the dash). Falls
+    back to "No data" if unparseable — the model treats that as a 1.0
+    multiplier (no correction).
+    """
+    if property_age is None:
+        return "No data"
+    s = str(property_age).strip().lower()
+    if not s or s in ("nan", "none", "no data"):
+        return "No data"
+    if "before" in s or s.startswith("pre-1900") or s == "pre 1900":
+        return "Before 1900"
+    if "onwards" in s:
+        return "2003 onwards"
+    # "post-YYYY" is open-ended on the right; resolve by the YYYY year
+    # rather than blanket-mapping to "2003 onwards" (the prior behaviour
+    # misrouted ~10% of the Newcastle EPC stock — "post-1996" was being
+    # sent to 2003+ instead of the 1991-2002 band).
+    m = re.search(r"(\d{4})\s*[-–—]\s*(\d{4})", s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        mid = (a + b) / 2.0
+        for label, (lo, hi) in _AGE_RANGES:
+            if lo <= mid <= hi:
+                return label
+        return "No data"
+    m1 = re.search(r"(\d{4})", s)
+    if m1:
+        y = int(m1.group(1))
+        for label, (lo, hi) in _AGE_RANGES:
+            if lo <= y <= hi:
+                return label
+    return "No data"
+
 import mesa
 import mesa_geo as mg
+import pandas as pd
 from shapely.geometry.base import BaseGeometry
+
+
+# SERL floor-area band edges (upper inclusive). Mirrors the bands in
+# ``research/applied/scripts/fit_area_scaling.py``. The fit script's
+# multiplier lookup is keyed on these labels; we map a dwelling's
+# floor_area_m2 → label here so agent.py can apply the per-band slope.
+_AREA_BAND_EDGES = (
+    (50.0,  "50 or less"),
+    (100.0, "51 to 100"),
+    (150.0, "101 to 150"),
+    (200.0, "151 to 200"),
+)
+_AREA_BAND_LARGEST = "Over 200"
+
+
+def _area_band_multiplier(area_m2: float, lookup: Dict[str, float]) -> float:
+    """Return the SERL-fitted slope multiplier for a dwelling of ``area_m2``.
+
+    ``lookup`` is the ``heat_slope_area_bands`` dict produced by
+    fit_area_scaling.py: ``{band_label: multiplier}`` normalised to the
+    51-100 m² reference band. If a band label is missing from the lookup
+    we fall back to 1.0 for that band — better to scale conservatively
+    than to throw mid-simulation.
+    """
+    for upper, label in _AREA_BAND_EDGES:
+        if area_m2 <= upper:
+            return float(lookup.get(label, 1.0))
+    return float(lookup.get(_AREA_BAND_LARGEST, 1.0))
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -128,11 +230,23 @@ class HouseholdAgent(mg.GeoAgent):
         is_off_gas: int | None = None,               # NEW
         crs: Optional[str] = None,
     ) -> None:
-        super().__init__(model=model, geometry=geometry, crs=crs)
+        # mesa-geo API differs across versions:
+        # - older: GeoAgent(model=..., geometry=..., crs=...)
+        # - newer: GeoAgent(unique_id=..., model=..., geometry=..., crs=...)
+        try:
+            super().__init__(unique_id=unique_id, model=model, geometry=geometry, crs=crs)
+        except TypeError:
+            super().__init__(model=model, geometry=geometry, crs=crs)
+
+        def _clean_text(v: object) -> Optional[str]:
+            if v is None or pd.isna(v):
+                return None
+            s = str(v).strip().lower()
+            return s or None
 
         # identity & static attributes
         self.unique_id: str = unique_id
-        self.property_type: str = property_type.strip().lower()
+        self.property_type: str = _clean_text(property_type) or ""
         self.sap_rating: float = sap_rating
         # track whether this dwelling came with a calibrated annual value
         self.has_calibrated_energy: bool = bool(getattr(self, "annual_energy_kwh", None))  # may be overridden in model.py
@@ -159,10 +273,10 @@ class HouseholdAgent(mg.GeoAgent):
             self.hh_income: Optional[float] = float(hh_income) if hh_income not in (None, "") else None        # NEW
         except Exception:
             self.hh_income = None
-        self.hh_income_band: Optional[str] = (hh_income_band or None)                                        # NEW
-        self.hh_edu_detail: Optional[str] = (hh_edu_detail or None)                                          # NEW
-        self.dwelling_bucket: Optional[str] = (dwelling_bucket or None)                                      # NEW
-        self.tenure: Optional[str] = (tenure or None)                                                        # NEW
+        self.hh_income_band: Optional[str] = _clean_text(hh_income_band)                                     # NEW
+        self.hh_edu_detail: Optional[str] = _clean_text(hh_edu_detail)                                       # NEW
+        self.dwelling_bucket: Optional[str] = _clean_text(dwelling_bucket)                                   # NEW
+        self.tenure: Optional[str] = _clean_text(tenure)                                                     # NEW
         if isinstance(schedule_type, str) and schedule_type.strip():
             self.schedule_type: Optional[str] = schedule_type.strip()
         else:
@@ -178,6 +292,8 @@ class HouseholdAgent(mg.GeoAgent):
 
         # per-tick state – cleared by model.step()
         self.energy_consumption: float = 0.0
+        # Annual rollups tracked by the model each tick (avoids huge agent_dc frames)
+        self.annual_kwh_by_year: dict[int, float] = {}
 
         # residents
         self.residents: List["PersonAgent"] = []
@@ -190,13 +306,15 @@ class HouseholdAgent(mg.GeoAgent):
 
         # NEW: attach core drivers (kept raw; used in calc/reporters)
         self.floor_area_m2 = None if floor_area_m2 is None else float(floor_area_m2)    # NEW
-        self.property_age  = (property_age or "").strip().lower() if property_age else None  # NEW
-        self.main_fuel_type = (main_fuel_type or "").strip().lower() if main_fuel_type else None  # NEW
-        self.main_heating_system = (main_heating_system or "").strip().lower() if main_heating_system else None  # NEW
+        self.property_age = _clean_text(property_age)  # NEW
+        # Cache SERL segmentation labels for v2 heating-side multipliers.
+        # Resolved once at init so apply_climate doesn't re-parse strings 8760×.
+        self._serl_sap_band: str = _serl_sap_band(sap_rating)
+        self._serl_age_band: str = _serl_age_band(self.property_age)
+        self.main_fuel_type = _clean_text(main_fuel_type)  # NEW
+        self.main_heating_system = _clean_text(main_heating_system)  # NEW
         self.is_heatpump_candidate = 1 if (is_heatpump_candidate or 0) else 0  # NEW
-        self.heatpump_candidate_class = (
-            (heatpump_candidate_class or "").strip().lower() if heatpump_candidate_class else None
-        )  # NEW
+        self.heatpump_candidate_class = _clean_text(heatpump_candidate_class)  # NEW
         self.has_heatpump = "heat pump" in (self.main_heating_system or "").lower()
         self.was_heatpump_initial = bool(self.has_heatpump)   # <-- NEW
         self.retrofit_envelope_score = None if retrofit_envelope_score is None else float(retrofit_envelope_score)  # NEW
@@ -220,7 +338,7 @@ class HouseholdAgent(mg.GeoAgent):
         p_mult  = cfg_arche.get(ptype, {}).get("ua_mult") if ptype in cfg_arche else None
         if p_mult is None:
             p_mult = heat_loss_default.get(ptype, 1.0)
-        sap_mult   = 1.15 if sap < 55 else (0.90 if sap > 80 else 1.00)
+        sap_mult   = self._sap_multiplier(kind="slope", sap_value=sap)
         retro_mult = 1.10 - 0.20 * max(0.0, min(1.0, retro))
         area_mult  = max(0.7, min(1.6, fa / 90.0))
         rng = __import__("random").Random(hash(str(self.unique_id)) & 0xFFFFFFFF)
@@ -232,6 +350,11 @@ class HouseholdAgent(mg.GeoAgent):
 
         # heat-pump effectiveness vs boiler (simple, deterministic)
         self.hp_effect_mult = getattr(self.model, "boiler_efficiency", 0.90) / getattr(self.model, "heatpump_cop_ref", 2.8)
+
+        # Precompute SAP helpers
+        self._sap_params_cache = self._sap_params()
+        self.sap_idx = self._sap_index(self.sap_rating)
+        self.sap_spike_mult = self._sap_multiplier(kind="spike", sap_value=self.sap_rating)
         # -----------------------------------------------------------
 
 
@@ -242,8 +365,8 @@ class HouseholdAgent(mg.GeoAgent):
             except Exception:
                 return 0
 
-        self.heating_controls = (heating_controls or "").strip().lower() if heating_controls else None  # NEW
-        self.meter_type = (meter_type or "").strip().lower() if meter_type else None  # NEW
+        self.heating_controls = _clean_text(heating_controls)  # NEW
+        self.meter_type = _clean_text(meter_type)  # NEW
         self.cwi_flag = _b(cwi_flag)                # NEW
         self.swi_flag = _b(swi_flag)                # NEW
         self.loft_ins_flag = _b(loft_ins_flag)      # NEW
@@ -259,52 +382,156 @@ class HouseholdAgent(mg.GeoAgent):
         self.occupancy_count: int = 0  # NEW
 
         # NEW: precompute hourly base once (big speed win)
-        self._hourly_base_kwh: float = self._compute_hourly_base_kwh()  # NEW
-        # NEW: per-household heat slope (kWh per degC-hour) for climate response
-        self.heat_slope_kWh_per_deg: float = self._compute_heat_slope(getattr(model, "heating_slope_kWh_per_deg", 0.05))
+        self._hourly_base_electric_kwh, self._hourly_base_gas_kwh = self._compute_hourly_base_components()
+        self._hourly_base_kwh: float = self._hourly_base_electric_kwh + self._hourly_base_gas_kwh
+        # NEW: per-household heat slope (kWh per degC-hour) for climate response.
+        # Base slope is fuel-specific: electric-heated homes use the model's
+        # electric slope (SERL fits it far below gas); all others use the shared
+        # slope. Structure modulation is applied on top in _compute_heat_slope.
+        self.heat_slope_kWh_per_deg: float = self._compute_heat_slope(self._model_base_heat_slope())
         # NEW: per-household heating capacity (kWh/h) for duty-cycle model
         self.heat_capacity_kWh_per_hour: float = self._compute_heat_capacity()
+        # Cache fuel-split routing once; this is used in person-hour hot paths.
+        self._refresh_fuel_split_cache()
 
-    # NEW: compute static hourly base from structure/levers (called once)
-    def _compute_hourly_base_kwh(self) -> float:  # NEW
-        """Non-climate baseline (small, meter-anchored, year-round).
+    def _baseline_area_multiplier(self) -> float:
+        """Per-dwelling baseline area scaling.
+
+        Preferred: SERL-fitted per-band lookup
+        ``model.baseline_elec_area_bands`` produced by
+        ``research/applied/scripts/fit_elec_baseline_area.py``. Maps the
+        dwelling's floor area to a SERL area band and applies the band's
+        multiplier (normalised to the 51-100 m² reference band). SERL
+        electricity baseline scales 0.75× → 2.38× across the 5 bands —
+        far wider than the old power-law allowed — so the lookup is the
+        authoritative carrier of area-correlated standby load (fridges,
+        freezers, hot-water tanks, modems, etc.).
+
+        Fallback: power-law ``(area / ref) ** exp`` clipped to
+        ``baseline_area_clip``. Default ref=70 m², exp=0.20, clip
+        [0.85, 1.25] — the historical defaults; kept for backward
+        compatibility with configs that predate the lookup.
+        """
+        fa = self.floor_area_m2
+        if fa is None or fa <= 0:
+            return 1.0
+        bands = getattr(self.model, "baseline_elec_area_bands", None)
+        if bands:
+            return float(_area_band_multiplier(fa, bands))
+        ref = float(getattr(self.model, "baseline_area_ref_m2", 70.0))
+        exp = float(getattr(self.model, "baseline_area_exp", 0.20))
+        lo, hi = getattr(self.model, "baseline_area_clip", (0.85, 1.25))
+        return max(lo, min(hi, (fa / ref) ** exp))
+
+    # NEW: compute static hourly baseline components from structure/levers (called once)
+    def _compute_hourly_base_components(self) -> tuple[float, float]:
+        """Return baseline components: (electric_kWh/h, gas_kWh/h).
 
         Intent:
-        - Do NOT rescale baseline by EPC/SAP/envelope/fuel.
         - Keep a modest fixed load that remains in summer.
-        - Property features shape heating only (handled elsewhere).
+        - Property features shape heating primarily; the ONLY efficiency
+          effect on the baseline is the optional SERL-read
+          ``sap_band_mult_base_electric`` gradient (inefficient homes run
+          more non-heating electricity — old appliances, immersion /
+          secondary electric heat). Inert when the config omits it.
         """
-        cfg = getattr(self.model, "config", None)
         level_scale = getattr(self.model, "level_scale", 1.0)
-        # Baseline anchored on meter data, not EPC annual
-        base = float(getattr(self.model, "baseline_anchor_kwh_per_hour", 0.4))
+        pt_mult_map = getattr(self.model, "property_type_mult_base", PROPERTY_TYPE_MULT_BASE)
+        pt_mult_map_e = getattr(self.model, "property_type_mult_base_electric", pt_mult_map)
+        pt_mult_map_g = getattr(self.model, "property_type_mult_base_gas", pt_mult_map)
+        pt_mult = pt_mult_map.get(self.property_type, pt_mult_map.get("default", 1.0))
+        pt_mult_e = pt_mult_map_e.get(self.property_type, pt_mult_map_e.get("default", pt_mult))
+        pt_mult_g = pt_mult_map_g.get(self.property_type, pt_mult_map_g.get("default", pt_mult))
+        area_mult = self._baseline_area_multiplier()
 
-        # property-type multiplier (baseline map from config if present)
-        pt_mult = PROPERTY_TYPE_MULT_BASE.get(self.property_type, 1.0)
-        if cfg and isinstance(cfg.model, dict):
-            pt_mult = cfg.model.get("property_type_mult_base", {}).get(self.property_type, pt_mult)
-        base *= pt_mult
+        if not bool(getattr(self.model, "use_separate_fuel_baseline_anchors", False)):
+            base_total = float(getattr(self.model, "baseline_anchor_kwh_per_hour", 0.4))
+            base_total *= pt_mult * area_mult * level_scale
+            gas_share = self._resolve_base_gas_share()
+            gas_kwh = base_total * gas_share
+            elec_kwh = base_total - gas_kwh
+        else:
+            base_elec = float(getattr(self.model, "baseline_anchor_elec_kwh_per_hour", 0.0))
+            base_gas = float(getattr(self.model, "baseline_anchor_gas_kwh_per_hour", 0.0))
+            bucket = self._resolve_heating_fuel_bucket()
+            # Per-cohort baseline anchor, each fitted from its own cohort's SERL
+            # data. Electric-heated homes are all-electric (water heating + cooking
+            # sit on the electricity meter, not gas), so SERL measures a higher
+            # baseline for them — they use their own fitted anchor, not a
+            # correction factor. Falls back to the shared anchor if unset.
+            if bucket == "electric":
+                base_elec = float(self._model_cfg().get(
+                    "baseline_anchor_elec_kwh_per_hour_electric", base_elec))
+            elec_kwh = base_elec * pt_mult_e * area_mult * level_scale
+            gas_kwh = (
+                base_gas * pt_mult_g * area_mult * level_scale
+                if bucket == "gas"
+                else 0.0
+            )
 
-        # floor area weak sublinear scaling
-        fa = self.floor_area_m2
-        if fa is not None and fa > 0:
-            ref = float(getattr(self.model, "baseline_area_ref_m2", 70.0))
-            exp = float(getattr(self.model, "baseline_area_exp", 0.20))
-            lo, hi = getattr(self.model, "baseline_area_clip", (0.85, 1.25))
-            area_mult = max(lo, min(hi, (fa / ref) ** exp))
-            base *= area_mult
+        # Deprivation gradient on the electricity baseline (SERL IMD-quintile
+        # ratios). Keyed by the HIDP economic quintile ``hh_income_band``
+        # (q1_lowest..q5_highest), falling back to a real ``imd_quintile`` field
+        # if one is joined later. Inert (mult 1.0) when no signal exists.
+        dep_map = getattr(self.model, "baseline_deprivation_mult", None)
+        if dep_map:
+            key = (getattr(self, "hh_income_band", None)
+                   or getattr(self, "imd_quintile", None)
+                   or getattr(self, "wealth_bucket", None))
+            elec_kwh *= float(dep_map.get(key, 1.0))
 
-        hourly = base * level_scale
-        # cap baseline to avoid unrealistic power draw
+        # Efficiency gradient on the electricity baseline (SERL summer
+        # electricity by EPC band, gas-heated cohort => no heating in the
+        # signal). Same band labels as the heating SAP multipliers.
+        sap_base_map = getattr(self.model, "sap_band_mult_base_electric", None)
+        if sap_base_map:
+            elec_kwh *= float(sap_base_map.get(getattr(self, "_serl_sap_band", "D"), 1.0))
+
+        hourly = elec_kwh + gas_kwh
         max_base = getattr(self.model, "max_base_kwh_per_hour", None)
         if max_base is not None:
-            hourly = min(hourly, float(max_base))
-        return hourly
+            max_base = float(max_base)
+            if hourly > max_base and hourly > 0:
+                scale = max_base / hourly
+                elec_kwh *= scale
+                gas_kwh *= scale
+        return max(0.0, elec_kwh), max(0.0, gas_kwh)
+
+    def _compute_hourly_base_kwh(self) -> float:
+        elec_kwh, gas_kwh = self._compute_hourly_base_components()
+        return elec_kwh + gas_kwh
+
+    def _model_base_heat_slope(self) -> float:
+        """Model-level base heating slope for this dwelling, fuel-specific.
+
+        Electric-heated homes use ``heating_slope_kWh_per_deg_electric`` when the
+        config supplies it; everything else uses the shared
+        ``heating_slope_kWh_per_deg``. Heat loss through the envelope (SAP, age,
+        area) is applied on top by ``_compute_heat_slope`` and is fuel-agnostic.
+        """
+        default = getattr(self.model, "heating_slope_kWh_per_deg", 0.05)
+        if self._resolve_heating_fuel_bucket() == "electric":
+            elec = getattr(self.model, "heating_slope_kWh_per_deg_electric", None)
+            if elec is not None:
+                return float(elec)
+        return float(default)
 
     def _compute_heat_slope(self, base_slope: float) -> float:
         """Per-household temperature sensitivity (heating slope). Structure affects slope, not annual anchor."""
         slope = float(base_slope)
         cfg = getattr(self.model, "config", None)
+
+        def _ptype_archetype(ptype: str | None) -> str:
+            t = (ptype or "").strip().lower()
+            if "detached" in t and "semi" not in t:
+                return "detached"
+            if "semi-detached" in t or "semi detached" in t:
+                return "semi-detached"
+            if "terraced" in t:
+                return "terraced"
+            if "flat" in t or "flats" in t:
+                return "flat"
+            return "default"
 
         # SAP: gentle modulation
         if self.sap_rating < 50:
@@ -312,16 +539,41 @@ class HouseholdAgent(mg.GeoAgent):
         elif self.sap_rating > 80:
             slope *= 0.90
 
-        # Property type multiplier (bounded, from config if present)
-        pt_mult = PROPERTY_TYPE_MULT_HEAT.get(self.property_type, 1.0)
-        if cfg and isinstance(cfg.model, dict):
-            pt_mult = cfg.model.get("pt_heat_mult", {}).get(self.property_type, cfg.model.get("pt_heat_mult", {}).get("default", pt_mult))
+        # Property type multiplier (bounded, prefer model-config override)
+        pt_mult_map = getattr(self.model, "property_type_mult_heat", PROPERTY_TYPE_MULT_HEAT)
+        arche = _ptype_archetype(self.property_type)
+        pt_mult = pt_mult_map.get(self.property_type)
+        if pt_mult is None:
+            pt_mult = pt_mult_map.get(arche)
+        if pt_mult is None:
+            pt_mult = pt_mult_map.get("default", 1.0)
         slope *= pt_mult
 
-        # Floor area sublinear scaling
-        area_exp = getattr(self.model, "heat_slope_area_exp", 0.6)
+        # SAP scaling (linear)
+        slope *= self._sap_multiplier(kind="slope", sap_value=self.sap_rating)
+
+        # Floor-area scaling.
+        #
+        # Preferred: SERL-fitted per-band lookup (model.heat_slope_area_bands)
+        # produced by research/applied/scripts/fit_area_scaling.py. Maps
+        # the dwelling's floor area to the relevant SERL band and applies
+        # the band's slope multiplier (normalised to the 51-100 m²
+        # reference band where the SERL panel is densest). The lookup
+        # carries SERL truth — no clipping.
+        #
+        # Fallback: power-law `(area / ref) ** exp`, default exponent 0.811
+        # (the SERL-implied exponent reported by fit_area_scaling — kept as
+        # a defensible default if the lookup is unavailable). Reference
+        # area is the SERL 51-100 midpoint (75 m²), matching the lookup's
+        # normalisation. Clipped to [0.5, 3.0] as a sanity bound spanning
+        # the SERL-observed range (0.61 → 2.62).
+        area_bands = getattr(self.model, "heat_slope_area_bands", None)
         if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
-            slope *= max(0.7, min(1.6, (self.floor_area_m2 / 90.0) ** area_exp))
+            if area_bands:
+                slope *= float(_area_band_multiplier(self.floor_area_m2, area_bands))
+            else:
+                area_exp = float(getattr(self.model, "heat_slope_area_exp", 0.811))
+                slope *= max(0.5, min(3.0, (self.floor_area_m2 / 75.0) ** area_exp))
         elif self.size_band is not None and (self.floor_area_m2 is None or self.floor_area_m2 <= 0):
             try:
                 sb = int(self.size_band)
@@ -340,7 +592,9 @@ class HouseholdAgent(mg.GeoAgent):
         heat = (self.main_heating_system or "")
         systems_cfg = cfg.systems if cfg else {}
         sys_mult = None
-        if "heat pump" in heat and "heat_pump" in systems_cfg:
+        if self._is_communal_system():
+            sys_mult = systems_cfg.get("communal", {}).get("heating_slope_mult", 0.85)
+        elif "heat pump" in heat and "heat_pump" in systems_cfg:
             sys_mult = systems_cfg.get("heat_pump", {}).get("heating_slope_mult", 0.70)
         elif "electric" in fuel and "electric_heating" in systems_cfg:
             sys_mult = systems_cfg.get("electric_heating", {}).get("heating_slope_mult", 1.00)
@@ -355,42 +609,69 @@ class HouseholdAgent(mg.GeoAgent):
         return max(s_min, min(s_max, slope))
 
     def _compute_heat_capacity(self) -> float:
-        """Compute per-dwelling heating capacity (kWh/h), sublinear in area, bounded."""
+        """Per-dwelling heating capacity (kWh/h) — a hard *physical* cap.
+
+        This is the maximum instantaneous heat output a dwelling's heating
+        system can deliver, not a calibration knob. The cap rarely binds
+        under UK climate with linear heating (post-Phase-1 model); it exists
+        so a January cold snap on a large detached house cannot integrate
+        to a physically implausible boiler output.
+
+        Sizing rule: 0.10 kW per m² of floor area (CIBSE Domestic Heating
+        Design Guide range for typical UK post-war stock), clipped to
+        [4 kW, ``model.max_heat_kwh_per_hour``] (default 24 kW — typical
+        UK combi boiler upper end). No SAP / property-type / system-type
+        modifiers: those are heat-*loss* proxies and have no business
+        sizing the heat-*delivery* hardware.
+        """
+        area = self.floor_area_m2 if (self.floor_area_m2 and self.floor_area_m2 > 0) else 90.0
+        cap = 0.10 * float(area)
+        max_cap = float(getattr(self.model, "max_heat_kwh_per_hour", 24.0))
+        return max(4.0, min(max_cap, cap))
+
+    # ------------------------------------------------------------------
+    #  SAP helpers
+    # ------------------------------------------------------------------
+    def _sap_params(self):
+        defaults = {
+            "sap_lo": 40.0, "sap_hi": 90.0,
+            "slope_mult_hi": 1.30, "slope_mult_lo": 0.70,
+            "cap_mult_hi": 1.15, "cap_mult_lo": 0.85,
+            "spike_mult_hi": 1.20, "spike_mult_lo": 0.80,
+        }
+        if hasattr(self, "_sap_params_cache"):
+            return self._sap_params_cache
         cfg = getattr(self.model, "config", None)
-        base_cap = float(getattr(self.model, "base_heat_capacity", 8.0))
-        cap = base_cap
+        params = dict(defaults)
+        if cfg and isinstance(getattr(cfg, "model", {}), dict):
+            params.update(cfg.model.get("sap_scaling", {}))
+        self._sap_params_cache = params
+        return params
 
-        # property type multiplier (reuse pt_heat_mult where available)
-        if cfg and isinstance(cfg.model, dict):
-            cap *= cfg.model.get("pt_heat_mult", {}).get(self.property_type, cfg.model.get("pt_heat_mult", {}).get("default", 1.0))
+    def _sap_index(self, sap_value) -> float:
+        params = self._sap_params()
+        sap = float(sap_value) if sap_value is not None else 70.0
+        sap = max(params["sap_lo"], min(params["sap_hi"], sap))
+        return (sap - params["sap_lo"]) / (params["sap_hi"] - params["sap_lo"])
+
+    def _sap_multiplier(self, kind: str, sap_value=None) -> float:
+        params = self._sap_params()
+        idx = self._sap_index(sap_value)
+        if kind == "slope":
+            hi, lo = params["slope_mult_hi"], params["slope_mult_lo"]
+        elif kind == "cap":
+            hi, lo = params["cap_mult_hi"], params["cap_mult_lo"]
+        elif kind == "spike":
+            hi, lo = params["spike_mult_hi"], params["spike_mult_lo"]
         else:
-            cap *= PROPERTY_TYPE_MULT_HEAT.get(self.property_type, 1.0)
-
-        # floor area scaling (sublinear)
-        area_exp = getattr(self.model, "heat_capacity_area_exp", 0.5)
-        if self.floor_area_m2 is not None and self.floor_area_m2 > 0:
-            cap *= max(0.7, min(1.6, (self.floor_area_m2 / 90.0) ** area_exp))
-
-        # system type nudges
-        heat = (self.main_heating_system or "").lower()
-        fuel = (self.main_fuel_type or "").lower()
-        if "heat pump" in heat:
-            cap *= 0.9
-        elif "electric" in fuel:
-            cap *= 0.9
-        elif "oil" in fuel:
-            cap *= 1.0
-        elif "solid" in fuel:
-            cap *= 1.1
-
-        # bounds
-        min_cap = float(getattr(self.model, "min_heat_capacity", 4.0))
-        max_cap = float(getattr(self.model, "max_heat_kwh_per_hour", 20.0))
-        return max(min_cap, min(max_cap, cap))
+            hi = lo = 1.0
+        return hi + (lo - hi) * idx
 
     def refresh_hourly_base(self) -> None:  # NEW: call if levers change mid-run
-        self._hourly_base_kwh = self._compute_hourly_base_kwh()  # NEW
+        self._hourly_base_electric_kwh, self._hourly_base_gas_kwh = self._compute_hourly_base_components()
+        self._hourly_base_kwh = self._hourly_base_electric_kwh + self._hourly_base_gas_kwh
         self.heat_capacity_kWh_per_hour = self._compute_heat_capacity()
+        self._refresh_fuel_split_cache()
 
     # ------------------------------------------------------------------
     #  Convenience helpers used by the model each tick
@@ -403,14 +684,187 @@ class HouseholdAgent(mg.GeoAgent):
         self.base_kwh = 0.0
         self.heat_kwh = 0.0
         self.spike_kwh = 0.0
+        # Fuel-split tracking (additive; does not replace energy_consumption)
+        self.electric_kwh = 0.0
+        self.gas_kwh = 0.0
+        self.other_kwh = 0.0
         self.cap_clip_total = 0.0
         self.cap_clip_base = 0.0
         self.cap_clip_heat = 0.0
         self.cap_clip_spike = 0.0
 
+    @staticmethod
+    def _norm_token(value) -> str:
+        return str(value or "").strip().lower()
+
+    def _model_cfg(self) -> dict:
+        cfg = getattr(self.model, "config", None)
+        return cfg.model if cfg else {}
+
+    def _is_communal_system(self) -> bool:
+        model_cfg = self._model_cfg()
+        labels = model_cfg.get("communal_system_labels", ["communal", "district"])
+        label_set = {self._norm_token(v) for v in labels}
+        return self._norm_token(self.main_heating_system) in label_set
+
+    def _resolve_heating_fuel_bucket(self) -> str:
+        """Classify heating energy bucket via explicit maps: electric, gas, or other."""
+        model_cfg = self._model_cfg()
+        fuel = self._norm_token(self.main_fuel_type)
+        heat = self._norm_token(self.main_heating_system)
+
+        combo_map = {self._norm_token(k): self._norm_token(v) for k, v in model_cfg.get("heating_fuel_combo_map", {}).items()}
+        system_map = {self._norm_token(k): self._norm_token(v) for k, v in model_cfg.get("heating_system_bucket_map", {}).items()}
+        fuel_map = {self._norm_token(k): self._norm_token(v) for k, v in model_cfg.get("fuel_type_bucket_map", {}).items()}
+
+        bucket = combo_map.get(f"{fuel}|{heat}")
+        if bucket is None:
+            bucket = system_map.get(heat)
+        if bucket is None:
+            bucket = fuel_map.get(fuel)
+
+        # Deterministic fallback only when no explicit mapping is provided.
+        if bucket is None:
+            if getattr(self, "has_heatpump", False) or getattr(self, "is_electric_heating", 0):
+                bucket = "electric"
+            elif getattr(self, "is_gas", 0):
+                bucket = "gas"
+            elif getattr(self, "is_oil", 0) or getattr(self, "is_solid_fuel", 0):
+                bucket = "other"
+            else:
+                bucket = "other"
+
+        if bucket not in {"electric", "gas", "other"}:
+            bucket = "other"
+        return bucket
+
+    def _resolve_base_gas_share(self) -> float:
+        """Share of baseline load allocated to gas for gas-heated homes."""
+        if bool(getattr(self.model, "use_separate_fuel_baseline_anchors", False)):
+            return 0.0
+        if self._resolve_heating_fuel_bucket() != "gas":
+            return 0.0
+        model_cfg = self._model_cfg()
+        share = float(model_cfg.get("gas_base_share", 0.0))
+        if self._is_communal_system():
+            share = float(model_cfg.get("gas_base_share_communal", share))
+        return max(0.0, min(1.0, share))
+
+    def _resolve_gas_spike_share(self) -> float:
+        """Share of spikes allocated to gas for gas-heated homes (hot water usage)."""
+        if self._resolve_heating_fuel_bucket() != "gas":
+            return 0.0
+        model_cfg = self._model_cfg()
+        share = float(model_cfg.get("gas_spike_share", 0.0))
+        if self._is_communal_system():
+            share = float(model_cfg.get("gas_spike_share_communal", share))
+        # clamp to [0,1]
+        return max(0.0, min(1.0, share))
+
+    def _refresh_fuel_split_cache(self) -> None:
+        bucket = self._resolve_heating_fuel_bucket()
+        self._cached_heating_bucket = bucket
+        if bucket != "gas":
+            self._cached_base_gas_share = 0.0
+            self._cached_gas_spike_share = 0.0
+            return
+
+        model_cfg = self._model_cfg()
+        is_communal = self._is_communal_system()
+
+        if bool(getattr(self.model, "use_separate_fuel_baseline_anchors", False)):
+            base_share = 0.0
+        else:
+            base_share = float(model_cfg.get("gas_base_share", 0.0))
+        spike_share = float(model_cfg.get("gas_spike_share", 0.0))
+        if is_communal:
+            if not bool(getattr(self.model, "use_separate_fuel_baseline_anchors", False)):
+                base_share = float(model_cfg.get("gas_base_share_communal", base_share))
+            spike_share = float(model_cfg.get("gas_spike_share_communal", spike_share))
+
+        self._cached_base_gas_share = max(0.0, min(1.0, base_share))
+        self._cached_gas_spike_share = max(0.0, min(1.0, spike_share))
+
+    def _heating_fuel_bucket(self) -> str:
+        bucket = getattr(self, "_cached_heating_bucket", None)
+        if bucket is None:
+            self._refresh_fuel_split_cache()
+            bucket = self._cached_heating_bucket
+        return bucket
+
+    def _base_gas_share(self) -> float:
+        share = getattr(self, "_cached_base_gas_share", None)
+        if share is None:
+            self._refresh_fuel_split_cache()
+            share = self._cached_base_gas_share
+        return float(share)
+
+    def _gas_spike_share(self) -> float:
+        share = getattr(self, "_cached_gas_spike_share", None)
+        if share is None:
+            self._refresh_fuel_split_cache()
+            share = self._cached_gas_spike_share
+        return float(share)
+
+    def _elec_heat_share(self) -> float:
+        """Share of a gas-heated home's space heat billed to the ELECTRICITY
+        meter (supplementary plug-in / unrecorded electric heating), looked up
+        by SAP band from model.elec_heat_share_by_sap. 0.0 when the map is
+        empty, so legacy configs are unchanged. Resistive heat: same kWh,
+        different meter."""
+        share = getattr(self, "_cached_elec_heat_share", None)
+        if share is None:
+            m = getattr(self.model, "elec_heat_share_by_sap", None) or {}
+            share = float(m.get(getattr(self, "_serl_sap_band", "D"), 0.0))
+            share = max(0.0, min(1.0, share))
+            self._cached_elec_heat_share = share
+        return float(share)
+
     def calc_base_energy(self) -> float:
         # NEW: return cached hourly base (computed once)
         return self._hourly_base_kwh  # NEW
+
+    def calc_base_electric_energy(self) -> float:
+        return float(getattr(self, "_hourly_base_electric_kwh", 0.0))
+
+    def calc_base_gas_energy(self) -> float:
+        return float(getattr(self, "_hourly_base_gas_kwh", 0.0))
+
+    def add_person_load(self, wealth: str, at_home: bool, awake: bool = True) -> float:
+        """Apply one person's occupancy-driven load and route it by fuel bucket."""
+        if at_home:
+            load = float(getattr(self.model, "energy_per_person_home", 0.06))
+            if awake:
+                load *= float(getattr(self.model, "awake_home_spike_mult", 1.0))
+            else:
+                load *= float(getattr(self.model, "sleep_home_spike_mult", 0.3))
+        else:
+            load = float(getattr(self.model, "energy_per_person_away", 0.01))
+
+        # ``wealth_mult_map`` (config-overridable) scales per-person load by
+        # wealth bucket. Default range 0.75–1.30 is an unsourced spread; the
+        # v5 calibration emits an all-1.0 map to neutralise this channel
+        # since no SERL signal identifies it directly (IMD_quintile exists
+        # in SERL but isn't the same as wealth, and we haven't fit it).
+        wealth_mult_map = getattr(self.model, "wealth_mult_map", None) or {
+            "very_low": 0.75,
+            "low": 0.9,
+            "mid": 1.0,
+            "high": 1.15,
+            "very_high": 1.3,
+        }
+        load *= float(wealth_mult_map.get(wealth, 1.0))
+
+        if hasattr(self, "sap_spike_mult"):
+            load *= self.sap_spike_mult
+
+        self.spike_kwh += load
+        self.energy_consumption += load
+        share = self._gas_spike_share()
+        gas_add = load * share
+        self.gas_kwh += gas_add
+        self.electric_kwh += (load - gas_add)
+        return load
 
     # ------------------------------------------------------------------
     #  Climate integration – called by the model
@@ -435,40 +889,81 @@ class HouseholdAgent(mg.GeoAgent):
             self.heat_kwh = 0.0
             return
 
-        db = 0.5  # NEW: thermostat deadband (°C)
+        # Temperature gaps with a small deadband
+        db = 0.5  # thermostat deadband (°C)
         hd = max(0.0, (heating_setpoint - self.ambient_tempC) - db)
         cd = max(0.0, (self.ambient_tempC - cooling_threshold) - db)
 
-        # Demand severity (dimensionless) based on slope and temperature gap
+        # v2 heating-side multipliers (added 2026-06).
+        # Resolve fuel bucket up-front so we can select the right (gas vs elec)
+        # multiplier dict. Missing keys default to 1.0 — older configs without
+        # v2 fields produce identical behaviour to before.
+        _bucket = self._heating_fuel_bucket()
+        if _bucket == "gas":
+            _sap_mults = getattr(self.model, "sap_band_mult_heating_gas",      None) or {}
+            _age_mults = getattr(self.model, "building_age_mult_heating_gas",  None) or {}
+        elif _bucket == "electric":
+            _sap_mults = getattr(self.model, "sap_band_mult_heating_electric",     None) or {}
+            _age_mults = getattr(self.model, "building_age_mult_heating_electric", None) or {}
+        else:
+            _sap_mults, _age_mults = {}, {}
+        _sap_mult = float(_sap_mults.get(getattr(self, "_serl_sap_band", "D"), 1.0))
+        _age_mult = float(_age_mults.get(getattr(self, "_serl_age_band", "_overall"), 1.0))
+        _heating_sensitivity_mult = _sap_mult * _age_mult
+
+        # Linear heating (post-Phase-1, 2026-06).
+        #
+        # Previously this block computed a saturating duty cycle
+        # `duty = loss_index / (loss_index + K)` and multiplied through a
+        # per-dwelling capacity, with K=3 acting as a free compression
+        # knob. The SERL slope calibration is linear-OLS, so the saturating
+        # simulator integrated to a different annual total than the slope
+        # had been fitted to deliver (+59% on gas vs SERL national mean).
+        # Functional-form mismatch — not fixable by re-tuning the slope.
+        #
+        # New form: heat = slope × HD × multipliers, clipped to a per-
+        # dwelling physical capacity (see ``_compute_heat_capacity``).
+        # The cap is reality-checking, not a knob — it almost never binds
+        # under UK climate at calibrated slopes.
         base_slope = float(heat_slope) if heat_slope is not None else float(self.heat_slope_kWh_per_deg)
-        eff_heat_slope = base_slope * (self.hp_effect_mult if self.has_heatpump else 1.0)
-        loss_index = hd * eff_heat_slope
-
-        # Duty cycle (0-1), soft saturation
-        K = float(getattr(self.model, "loss_to_duty_k", 3.0))
-        duty = loss_index / (loss_index + K) if loss_index > 0 else 0.0
-        duty = max(0.0, min(1.0, duty))
-
-        # Capacity-based heating (kWh/h)
-        heat_capacity = self.heat_capacity_kWh_per_hour
-        heat = duty * heat_capacity
-
+        eff_heat_slope = (
+            base_slope
+            * (self.hp_effect_mult if self.has_heatpump else 1.0)
+            * _heating_sensitivity_mult
+        )
+        heat = hd * eff_heat_slope
         cool = cd * float(cool_slope)
 
-        # Hard cap as safety net
-        max_heat = getattr(self.model, "max_heat_kwh_per_hour", None)
-        if max_heat is not None:
-            heat = min(heat, float(max_heat))
+        # Per-dwelling physical capacity (hard cap, not a calibration knob).
+        cap = float(self.heat_capacity_kWh_per_hour)
+        if cap > 0:
+            heat = min(heat, cap)
 
-        # Optional: dampen when nobody is home (simple heuristic)
-        if occupancy is not None and occupancy <= 0:
-            heat *= 0.5
-            cool *= 0.5
+        if occupancy is not None:
+            n_residents = max(1, len(self.residents))
+            occ_share = max(0.0, min(1.0, float(occupancy) / float(n_residents)))
+            away_floor = float(getattr(self.model, "heating_occupancy_away_mult", 0.5))
+            away_floor = max(0.0, min(1.0, away_floor))
+            occ_mult = away_floor + (1.0 - away_floor) * occ_share
+            heat *= occ_mult
+            cool *= occ_mult
 
         self.heat_kwh = heat
         self.climate_heating_kWh = heat
         self.climate_cooling_kWh = cool
         self.energy_consumption += heat + cool
+        # Reuse the fuel bucket resolved above for the v2 multipliers.
+        # (Cooling treated as electric by default.)
+        bucket = _bucket
+        if bucket == "electric":
+            self.electric_kwh += heat + cool
+        elif bucket == "gas":
+            _sh = self._elec_heat_share()
+            self.gas_kwh += heat * (1.0 - _sh)
+            self.electric_kwh += heat * _sh + cool
+        else:
+            self.other_kwh += heat
+            self.electric_kwh += cool
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -487,10 +982,16 @@ class PersonAgent(mesa.Agent):
         schedule_profile: str = "unknown",
         leave_hour: Optional[int] = None,
         return_hour: Optional[int] = None,
+        wake_hour: Optional[int] = None,
+        sleep_hour: Optional[int] = None,
         wealth: Optional[str] = None,
         sap: Optional[float] = None,
     ) -> None:
-        super().__init__(model=model)
+        # mesa Agent API also differs by version.
+        try:
+            super().__init__(unique_id=unique_id, model=model)
+        except TypeError:
+            super().__init__(model=model)
 
         self.unique_id: str = unique_id
         self.home: HouseholdAgent = home
@@ -498,12 +999,28 @@ class PersonAgent(mesa.Agent):
         self.schedule_profile: str = schedule_profile
         self.leave_hour: Optional[int] = leave_hour
         self.return_hour: Optional[int] = return_hour
+        self.wake_hour: Optional[int] = wake_hour
+        self.sleep_hour: Optional[int] = sleep_hour
         self.at_home: bool = True   # updated each tick
+        self.awake: bool = True
 
         self.wealth: str = wealth or "medium"
         self.sap: float = sap if sap is not None else home.sap_rating
 
         self.energy: float = 0.0
+
+    @staticmethod
+    def _is_awake_at_hour(hour: int, wake_hour: Optional[int], sleep_hour: Optional[int]) -> bool:
+        if wake_hour is None or sleep_hour is None:
+            return True
+        w = int(wake_hour) % 24
+        s = int(sleep_hour) % 24
+        h = int(hour) % 24
+        if w == s:
+            return True
+        if w < s:
+            return (h >= w) and (h < s)
+        return (h >= w) or (h < s)
 
     def step(self) -> None:
         """Update presence status and add corresponding kWh to household."""
@@ -520,23 +1037,5 @@ class PersonAgent(mesa.Agent):
                 self.at_home = True
                 self.home.occupancy_count += 1   # NEW
 
-        # energy spike
-        base_spike = self.model.energy_per_person_home
-        if self.wealth == "high":
-            base_spike *= 1.3
-        elif self.wealth == "low":
-            base_spike *= 0.8
-        if self.sap < 50:
-            base_spike *= 1.2
-        elif self.sap > 80:
-            base_spike *= 0.8
-
-        if self.at_home:
-            self.home.spike_kwh += base_spike
-            self.home.energy_consumption += base_spike
-            self.energy = base_spike
-        else:
-            standby = self.model.energy_per_person_away
-            self.home.spike_kwh += standby
-            self.home.energy_consumption += standby
-            self.energy = standby
+        self.awake = self._is_awake_at_hour(hour, self.wake_hour, self.sleep_hour)
+        self.energy = self.home.add_person_load(self.wealth, self.at_home, self.awake)

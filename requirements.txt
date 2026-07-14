@@ -6,19 +6,27 @@ mesa-geo>=0.9.1           # Spatial extensions (GeoSpace, GeoAgent)
 solara>=1.28              # Reactive web UI + ipywidgets 8 backend
 
 # --- Data handling -------------------------------------------------
-pandas                    # tabular analysis + CSV/Parquet I/O
-numpy                     # numerical backbone (pandas + matplotlib depend on it)
-pyarrow                   # fast Parquet read/write for pandas
+# Numerics pinned to the versions the v5 results were produced with, so a
+# fresh install reproduces them rather than drifting on a newer release.
+pandas==3.0.1             # tabular analysis + CSV/Parquet I/O
+numpy==2.4.3              # numerical backbone (pandas + matplotlib depend on it)
+pyarrow==23.0.1           # fast Parquet read/write for pandas
+scipy==1.17.1             # OLS/least-squares fits in the calibration scripts
+PyYAML>=6.0               # config + calibrated-config I/O (household_energy/config.py)
+
+# --- Geospatial ----------------------------------------------------
+# Used directly across run_lsoa_batch / transfer / make_paper_figures; do not
+# rely on mesa-geo to pull these transitively.
+geopandas==1.1.3
+shapely==2.1.2
+pyproj==3.7.2
 
 # --- Visualisation -------------------------------------------------
-matplotlib                # static plots (line, bar, heat-map)
+matplotlib==3.10.8        # static plots (line, bar, heat-map)
+contextily==1.7.0         # basemap tiles for the LSOA choropleth
 folium                    # interactive Leaflet maps
-contextily                # background tiles for hex-bin basemap
 plotly
 
 # --- Utility -------------------------------------------------------
 cloudpickle               # serialise full Mesa model objects for replay
-
-# --- Climate -------------------------------------------------------
-scipy               # 
-openpyxl
+openpyxl                  # read DESNZ .xlsx validation workbooks
