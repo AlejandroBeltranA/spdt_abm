@@ -4,7 +4,7 @@
 
 Simulates hour-by-hour residential energy demand for every dwelling in a GeoJSON, with validation against DESNZ subnational electricity & gas (2020–2023) and built-in policy levers (heat-pumps, retrofits, socio-demographic targeting).
 
-An interactive demonstration of the results is available [here](https://alejandrobeltrana.github.io/spdt_abm/abm_demo.html).
+An interactive demonstration of the main model features is available [here](https://alejandrobeltrana.github.io/spdt_abm/abm_demo.html).
 
 ---
 
